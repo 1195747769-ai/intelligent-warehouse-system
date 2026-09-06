@@ -1,0 +1,13 @@
+data/
+*.db
+*.db.*
+*.log
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Internal verification and working notes are not part of the public release.
+试用验收记录.md
+项目核对报告-*.md
