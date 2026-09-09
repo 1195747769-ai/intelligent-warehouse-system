@@ -13,6 +13,7 @@ SCALE = 1000000
 STATES = ('AVAILABLE', 'PENDING', 'QUARANTINE', 'SPARE')
 TRANSPORT = ('PLANNED', 'DISPATCHED', 'SEA', 'CUSTOMS', 'RELEASED', 'ROAD', 'ARRIVED')
 TOKEN = secrets.token_urlsafe(32)
+APP_VERSION = '0.1.1'  # keep in sync with CHANGELOG.md
 
 # The project uses a fixed set of equipment packages/sections.  Keep the
 # short A-code stable for filtering and documents, while exposing the formal
@@ -805,7 +806,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('Host','').split(':')[0] not in ('127.0.0.1','localhost'): return self.send({'error':'Local access only'},403)
         try:
             if path=='/api/state':
-                state=dict(overview(),token=TOKEN)
+                state=dict(overview(),token=TOKEN,version=APP_VERSION)
                 state['admin_password_configured']=admin_password_configured()
                 return self.send(state)
             if path=='/api/document': return self.send(doc_detail(query['id'][0]))
