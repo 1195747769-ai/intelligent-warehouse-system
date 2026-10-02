@@ -28,6 +28,8 @@
 
 最新版安装包与便携 ZIP：从 [GitHub Releases](https://github.com/1195747769-ai/intelligent-warehouse-system/releases/latest) 下载。仓储核心约48MB，本地AI为独立选装包。
 
+本次 v0.1.36 Release 提供仓储核心安装包、便携包与使用说明；4B模型包未上传，已有本地AI包可继续使用。
+
 Windows 10/11 x64：双击 Setup 安装包；便携 ZIP 请完整解压后双击 `安装.bat`。核心程序自带 Python 和 Excel 读取组件，断网也可安装，不需要另外安装 Python、Node 或 pip。
 
 **双击桌面图标即可**：自动检查环境、启动服务并打开浏览器，直达 http://127.0.0.1:8765；日常启动不再弹出黑色命令窗口。便携目录可双击 `启动系统.cmd`。
@@ -50,7 +52,7 @@ Windows 10/11 x64：双击 Setup 安装包；便携 ZIP 请完整解压后双击
 - 升级：再次运行新版 Setup，使用原安装目录。库存、单据、备份和本地模型保留，原程序文件备份到 `backups/app-upgrade-*`。
 - 卸载：从 Windows“已安装的应用”卸载。数据保留在原目录，重新安装同一目录可继续使用。请勿直接删除整个程序目录。
 - 4B AI：先安装核心，把 `InstallAI.cmd` 与 `IntelligentWarehouse-AI-4B-Optional.zip` 放在同一文件夹，双击前者。包约 2.5GB，建议 16GB 内存；无独立显卡时使用 CPU，速度以实际电脑为准。
-- GitHub 上的 AI 包分为 `IntelligentWarehouse-AI-4B-Optional.zip.part01` 和 `.part02`。两段与 `InstallAI.cmd`、`JoinAI.py` 下载到同一文件夹后，双击 `InstallAI.cmd` 自动合并、校验和安装。下载、合并与安装合计建议至少8GB可用空间。
+- 如使用 AI 分包，文件分为 `IntelligentWarehouse-AI-4B-Optional.zip.part01` 和 `.part02`。两段与 `InstallAI.cmd`、`JoinAI.py` 下载到同一文件夹后，双击 `InstallAI.cmd` 自动合并、校验和安装。下载、合并与安装合计建议至少8GB可用空间。
 - AI 包需要微软 Visual C++ x64 运行库。缺失时安装入口会给出 [微软官方下载](https://aka.ms/vc14/vc_redist.x64.exe)，不会覆盖原模型。核心入库无需 AI 或这项额外安装。
 - AI 只提出名称、规格等识别建议，仍由人工核对确认。草稿可跨业务切页、系统刷新和语言切换保留；关闭浏览器或原生 F5 不保留草稿。
 
