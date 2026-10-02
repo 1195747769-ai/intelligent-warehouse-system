@@ -1,0 +1,74 @@
+{
+  "source": "P08114 - Consolidated Baphalane Spitskop Cluster.kmz / doc.kml",
+  "geometryStatus": "仅供展示参考；KMZ路径尚待GIS/CAD核对，不代表批准中心线、杆塔位置或施工放样",
+  "lengthBasis": "当前项目参数基准V6工作口径：Baphalane IPP—Manama约17 km；Manama—Spitskop MTS约8 km；合计约25 km。待业主/Eskom书面确认。",
+  "displayScale": "非比例示意，路径折线与塔位已压缩处理",
+  "routeNote": "线路折线按集群KMZ压缩示意，尚待GIS/CAD核对。当前参数基准为17 km + 8 km ≈ 25 km；附录10 R1另列19 km + 17 km，两种里程口径冲突，待业主/Eskom书面确认。交叉标记按附录距离沿示意线放置，不是测绘坐标或施工位置。",
+  "connectionBasis": "图纸关系参考：Baphalane Overall SLD Rev C 与 Manama Collector Station SLD Rev C 分别列示 Baphalane Solar Farm FDR、Spitskop MTS FDR，并显示 Manama 132 kV 双母线及母联。三维模型按两条独立线路分别接入站端间隔表达，不表示架空导线穿站直通；站内间隔实体位置和母线选择为示意，需以最新批准 GA/设计为准。",
+  "crossingReference": {
+    "source": "Appendix_10_Baphalane_Phase_I_132kV_Transmission_Line_Crossings_R1_EN.pdf",
+    "sourceDate": "2026-05-10",
+    "sourcePages": "线路总图第1页；交叉照片及说明第2-8页",
+    "status": "参考资料；交叉点未提供坐标。附录里的19 km + 17 km及400 MWh为与当前项目基准不一致的旧口径，仅用于理解交叉点类型和相对顺序。"
+  },
+  "crossingPositionNote": "场景中交叉点编号沿候选KMZ折线作视觉疏排，供讲解顺序使用，不表示真实坐标、精确间距或施工位置。",
+  "crossings": [
+    { "id": "1", "segmentId": "baphalane-manama", "fraction": 0.17, "title": "交叉点 1 · Z566 公路", "location": "距Baphalane IPP约0.5 km", "detail": "附录10记载线路跨越Z566沥青公路，路宽约6-7 m；交通量低，未见其他高大障碍物。位置按附录相对距离示意，无测绘坐标。", "page": 2 },
+    { "id": "2", "segmentId": "baphalane-manama", "fraction": 0.25, "title": "交叉点 2 · D515 公路", "location": "距Baphalane IPP约1.5 km", "detail": "附录10记载线路跨越D515沥青公路，路宽约6-7 m；交通量低。位置按附录相对距离示意，无测绘坐标。", "page": 3 },
+    { "id": "3", "segmentId": "baphalane-manama", "fraction": 0.41, "title": "交叉点 3 · 水库设施附近", "location": "距Baphalane IPP约6.8 km", "detail": "附录10提示线路可能跨越大型蓄水设施服务管线；线路距场地围栏约30 m、距最近水罐约80-100 m。此为交叉风险提示，不代表已核实管线坐标。", "page": 4 },
+    { "id": "4", "segmentId": "baphalane-manama", "fraction": 0.58, "title": "交叉点 4 · 农场土路", "location": "距Baphalane IPP约10.3 km", "detail": "附录10记载线路与约6-7 m宽农场土路平交；另有一条垂直农场路距线路约50 m。位置按附录相对距离示意，无测绘坐标。", "page": 5 },
+    { "id": "6", "segmentId": "baphalane-manama", "fraction": 0.73, "title": "交叉点 6 · 六回既有输电线", "location": "距Manama Collector Station约5.6 km（附录10口径）", "detail": "附录10记载线路跨越6回既有输电线路，总宽约150-200 m；塔高估计约25-30 m，长跨越施工难度较大。电压等级和坐标仍需设计核实。", "page": 7 },
+    { "id": "5", "segmentId": "baphalane-manama", "fraction": 0.83, "title": "交叉点 5 · R510 公路与货运铁路", "location": "距Manama Collector Station约4.3 km（附录10口径）", "detail": "附录10记载R510省道与货运铁路合计跨越宽约80 m；交通量高，放线难度较大。Manama Collector Station距公路/铁路约0.5 km。", "page": 6 },
+    { "id": "7", "segmentId": "manama-spitskop", "fraction": 0.72, "title": "交叉点 7 · Spitskop接入侧多回线路", "location": "距Eskom Point of Connection约0.1 km", "detail": "附录10记载接入侧跨越5回既有输电线路，总宽约450-500 m；附近另有农场土路。坐标、最终跨越顺序及带电施工条件需Eskom设计阶段核实。", "page": 8 }
+  ],
+  "stations": [
+    { "id": "baphalane", "name": "Baphalane IPP Substation", "shortName": "巴法拉内 IPP 升压站", "coords": [27.3765444109, -25.1879549703521], "color": "#e47c32", "description": "项目侧升压站；空间位置取自集群 KMZ 线路端点，设备为识别性展示模型。" },
+    { "id": "manama", "name": "Manama Collector Station", "shortName": "Manama 汇集站", "coords": [27.2558552846247, -25.0498028872414], "color": "#738a86", "description": "单线图关系示意：Baphalane Solar Farm FDR 与 Spitskop MTS FDR 分别经独立进线间隔接入 Manama 132 kV 双母线；母线选择、母联及站内实体位置仍以最新批准图为准。" },
+    { "id": "spitskop", "name": "Spitskop Main Transmission Station", "shortName": "Spitskop MTS 电网接入站", "coords": [27.1259487336979, -24.9977329017572], "color": "#d1a044", "description": "Eskom 侧主输电站；设备形态为识别性展示模型，不代表站内最终配置。" }
+  ],
+  "segments": [
+    {
+      "id": "baphalane-manama",
+      "name": "Baphalane IPP — Manama Collector Station",
+      "fromStationId": "baphalane",
+      "toStationId": "manama",
+      "feederLabel": "Baphalane Solar Farm FDR",
+      "km": 17,
+      "kmlFeature": "Polyline [F892E]",
+      "coordinates": [
+        [27.3765444109, -25.1879549703521],
+        [27.3720520437542, -25.1888345560699],
+        [27.3474200933491, -25.1906078911925],
+        [27.3357735257568, -25.1887363285722],
+        [27.32553737095, -25.1783234756021],
+        [27.31673242615, -25.167714506902],
+        [27.29690899445, -25.1183264237521],
+        [27.2881719187, -25.0897822397021],
+        [27.27952777825, -25.0615277768021],
+        [27.26993674535, -25.0610070013521],
+        [27.2556588904215, -25.0602298677685],
+        [27.25614123211979, -25.0532803717029],
+        [27.2557992880982, -25.050613779335],
+        [27.2558552846247, -25.0498028872414]
+      ]
+    },
+    {
+      "id": "manama-spitskop",
+      "name": "Manama Collector Station — Spitskop MTS",
+      "fromStationId": "manama",
+      "toStationId": "spitskop",
+      "feederLabel": "Spitskop MTS FDR",
+      "km": 8,
+      "kmlFeature": "Polyline [F8938]",
+      "coordinates": [
+        [27.2558552846247, -25.0498028872414],
+        [27.2399908985738, -25.0378886935069],
+        [27.1976198141067, -25.0326300366073],
+        [27.178666594403, -25.0079640950588],
+        [27.166530419902, -25.009659205559],
+        [27.128462649329, -24.9990605675358],
+        [27.1259487336979, -24.9977329017572]
+      ]
+    }
+  ]
+}

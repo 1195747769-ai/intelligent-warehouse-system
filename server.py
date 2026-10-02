@@ -1,11 +1,12 @@
 """Local materials ledger. Exact quantities, transactional posting, immutable documents."""
-import base64, csv, hashlib, hmac, io, json, os, re, secrets, sqlite3, sys, threading, zipfile
-from datetime import datetime, timezone
+import base64, csv, gzip, hashlib, hmac, io, json, mimetypes, os, re, secrets, sqlite3, sys, threading, unicodedata, zipfile
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote, quote
 import openpyxl
+import local_ai
 
 ROOT = Path(__file__).resolve().parent
 DATA = Path(os.environ.get('MATERIALS_DATA', ROOT / 'data'))
@@ -13,7 +14,25 @@ SCALE = 1000000
 STATES = ('AVAILABLE', 'PENDING', 'QUARANTINE', 'SPARE')
 TRANSPORT = ('PLANNED', 'DISPATCHED', 'SEA', 'CUSTOMS', 'RELEASED', 'ROAD', 'ARRIVED')
 TOKEN = secrets.token_urlsafe(32)
-APP_VERSION = '0.1.1'  # keep in sync with CHANGELOG.md
+APP_VERSION = '0.1.36'  # keep in sync with CHANGELOG.md and static/app.js
+RECOGNITION_PARSER_VERSION = '1'
+RECOGNITION_TIMEZONE = timezone(timedelta(hours=2), 'SAST')
+# The ledger is the only unbounded table: one row per movement.  Sending all of
+# it on every refresh is what made large databases slow to open, so the default
+# state ships only the most recent slice and the rest is paged in on demand.
+LEDGER_PAGE_SIZE = 300
+LEDGER_MAX_PAGE_SIZE = 2000
+# The item master is the other table that grows with the catalogue, and it had
+# the same problem twice over: every refresh shipped every item row, and every
+# row travelled a second time nested inside its contract group.  At 3,000 items
+# the two copies were 2.07 MB and effectively the whole response.  Contracts now
+# carry codes plus a count, and item rows travel as a bounded page that the
+# materials table pages in on demand - the same shape as the ledger.
+ITEMS_PAGE_SIZE = 300
+ITEMS_MAX_PAGE_SIZE = 2000
+# Columns the server-side item search looks at.  Keep in sync with the search
+# placeholder on the materials table.
+ITEM_SEARCH_FIELDS = ('code', 'name', 'spec', 'unit', 'package', 'attribute')
 
 # The project uses a fixed set of equipment packages/sections.  Keep the
 # short A-code stable for filtering and documents, while exposing the formal
@@ -38,6 +57,26 @@ SEGMENTS = (
 )
 SEGMENT_CODES = {code for code, _, _ in SEGMENTS}
 SEGMENT_NAMES = {code: {'zh': zh, 'en': en} for code, zh, en in SEGMENTS}
+
+# Explicit warehouse A1-A16 to current procurement Lot 01-16 crosswalk.
+LOT_CROSSWALK = {
+    'A1':'Lot-01', 'A2':'Lot-02', 'A3':'Lot-03', 'A4':'Lot-04',
+    'A5':'Lot-05', 'A6':'Lot-06', 'A7':'Lot-07', 'A8':'Lot-08',
+    'A9':'Lot-09', 'A10':'Lot-10', 'A11':'Lot-11', 'A12':'Lot-12',
+    'A13':'Lot-13', 'A14':'Lot-14', 'A15':'Lot-15', 'A16':'Lot-16',
+}
+PROJECT_ARRIVAL_TARGETS = (
+    {'view':'overview','key':'bess-cabinet','name':'储能柜','package':'A5','unit':'台',
+     'aliases':('储能柜','电池柜','储能电池柜','电池舱'),'model_display_count':86},
+    {'view':'overview','key':'pcs','name':'PCS 储能变流器','package':'A5','unit':'台',
+     'aliases':('PCS','储能PCS','储能变流器','储能变流升压一体机')},
+    {'view':'pv','key':'pv-inverter','name':'组串式逆变器','package':'A3','unit':'台',
+     'aliases':('光伏组串式逆变器','组串式逆变器','光伏逆变器','逆变器')},
+    {'view':'pv','key':'pv-transformer','name':'PV 箱式变压器','package':'A4','unit':'台',
+     'aliases':('PV箱式变压器','PV箱变','光伏箱变','箱式变压器','箱变')},
+    {'view':'transmission','key':'main-transformer','name':'132 kV 主变压器','package':'A15','unit':'台',
+     'aliases':('132kV主变压器','132kV主变','主变压器','主变')},
+)
 
 def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def clean(v): return str(v if v is not None else '').strip()
@@ -84,9 +123,11 @@ def generated_batch(p):
     # New UI batches are deliberately short (B01, B02...).  Keep the old
     # device/date form only for legacy direct API callers that still send the
     # deprecated batch_device field; no new receipt can create that form.
-    seq=clean(p.get('batch_number') or p.get('batchNumber') or '1')
-    try: seq=f'{max(1,int(seq)):02d}'[-2:]
-    except (TypeError,ValueError): seq='01'
+    value=p.get('batch_number',p.get('batchNumber','1'))
+    seq=clean(value)
+    if isinstance(value,bool) or not re.fullmatch(r'[0-9]{1,12}',seq) or int(seq)<=0:
+        raise ValueError('批次序号须为正整数（最多12位） / Batch sequence must be a positive integer (maximum 12 digits)')
+    seq=f'{int(seq):02d}'
     legacy_device=clean(p.get('batch_device') or p.get('batchDevice') or p.get('device_type'))
     if legacy_device and not p.get('segment_required'):
         raw_date=clean(p.get('arrival_date') or p.get('batch_date'))
@@ -111,6 +152,10 @@ def init():
         c.executescript('''
 CREATE TABLE IF NOT EXISTS items(code TEXT PRIMARY KEY, name TEXT NOT NULL, spec TEXT NOT NULL, unit TEXT NOT NULL, package TEXT NOT NULL, attribute TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS documents(id INTEGER PRIMARY KEY, number TEXT UNIQUE NOT NULL, kind TEXT NOT NULL, external_ref TEXT NOT NULL, operator TEXT NOT NULL, party TEXT NOT NULL, purpose TEXT NOT NULL, created TEXT NOT NULL, arrival_date TEXT NOT NULL DEFAULT '', request_key TEXT UNIQUE NOT NULL, file_hash TEXT, source_path TEXT, reversed_by INTEGER, reverse_of INTEGER UNIQUE);
+CREATE TABLE IF NOT EXISTS recognitions(id INTEGER PRIMARY KEY, recognized_at TEXT NOT NULL, updated_at TEXT NOT NULL, business_date TEXT NOT NULL DEFAULT '', category TEXT NOT NULL, status TEXT NOT NULL, original_name TEXT NOT NULL, raw_sha256 TEXT NOT NULL, selection_hash TEXT NOT NULL, sheet_name TEXT NOT NULL, parser_version TEXT NOT NULL, source_path TEXT NOT NULL, segments_json TEXT NOT NULL DEFAULT '[]', batches_json TEXT NOT NULL DEFAULT '[]', snapshot_json TEXT NOT NULL, document_id INTEGER);
+CREATE UNIQUE INDEX IF NOT EXISTS unique_recognition_version ON recognitions(raw_sha256,selection_hash,parser_version);
+CREATE INDEX IF NOT EXISTS idx_recognitions_date ON recognitions(recognized_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS idx_recognitions_status ON recognitions(status,category,recognized_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS unique_import_file ON documents(file_hash) WHERE file_hash IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS unique_business_ref ON documents(kind,external_ref) WHERE kind IN ('IN','BASELINE');
 CREATE TABLE IF NOT EXISTS lines(id INTEGER PRIMARY KEY, doc_id INTEGER NOT NULL REFERENCES documents(id), code TEXT NOT NULL, name TEXT NOT NULL, spec TEXT NOT NULL, unit TEXT NOT NULL, batch TEXT NOT NULL, box TEXT NOT NULL DEFAULT '', warehouse TEXT NOT NULL, bin TEXT NOT NULL, state TEXT NOT NULL, qty INTEGER NOT NULL, attribute TEXT NOT NULL DEFAULT '', contents TEXT NOT NULL DEFAULT '', source_row INTEGER);
@@ -121,6 +166,15 @@ CREATE TABLE IF NOT EXISTS changes(id INTEGER PRIMARY KEY, code TEXT NOT NULL RE
 CREATE TABLE IF NOT EXISTS batches(code TEXT PRIMARY KEY, supplier TEXT NOT NULL, status TEXT NOT NULL, updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY, batch TEXT NOT NULL, old_status TEXT, new_status TEXT, operator TEXT NOT NULL, note TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS admin_actions(id INTEGER PRIMARY KEY, action TEXT NOT NULL, document_id INTEGER NOT NULL, document_number TEXT NOT NULL, reason TEXT NOT NULL, operator TEXT NOT NULL, created TEXT NOT NULL);
+
+-- Business indexes.  Without these, every per-item summary falls back to a
+-- full scan of lines/movements, so refresh time grows with (items x rows).
+-- IF NOT EXISTS also back-fills indexes on databases created earlier.
+CREATE INDEX IF NOT EXISTS idx_lines_code ON lines(code);
+CREATE INDEX IF NOT EXISTS idx_lines_doc ON lines(doc_id);
+CREATE INDEX IF NOT EXISTS idx_movements_stock ON movements(stock_id);
+CREATE INDEX IF NOT EXISTS idx_movements_doc ON movements(doc_id);
+CREATE INDEX IF NOT EXISTS idx_changes_code ON changes(code);
 ''')
         for table,column,definition in [('items','attribute','TEXT NOT NULL DEFAULT \'\''),('documents','arrival_date','TEXT NOT NULL DEFAULT \'\''),('lines','box','TEXT NOT NULL DEFAULT \'\''),('lines','attribute','TEXT NOT NULL DEFAULT \'\''),('lines','contents','TEXT NOT NULL DEFAULT \'\''),('stock','box','TEXT NOT NULL DEFAULT \'\''),('stock','contents','TEXT NOT NULL DEFAULT \'\'')]:
             cols={row['name'] for row in c.execute(f'PRAGMA table_info({table})').fetchall()}
@@ -178,6 +232,7 @@ def contract_numbers(rows):
 
 def parse_file(p):
     filename = required(p.get('filename'), '文件名 / Filename')
+    if Path(filename).name.startswith('~$'): raise ValueError('这是 Excel 锁文件，请上传实际工作簿')
     try: raw = base64.b64decode(p.get('content',''), validate=True)
     except Exception: raise ValueError('文件编码无效 / Invalid file encoding')
     if not raw or len(raw)>12*1024*1024: raise ValueError('文件为空或超过12MB / Empty file or exceeds 12 MB')
@@ -198,9 +253,6 @@ def parse_file(p):
             # carton quantities and must never be posted as receipt lines;
             # receipt posting is intentionally limited to the packing-detail
             # sheet selected by the operator.
-            sheet_label=sheet.lower()
-            if p.get('kind','IN')=='IN' and ('发货' in sheet_label or 'shipment' in sheet_label):
-                raise ValueError('当前工作表是箱级发货清单，仅用于物流和到货核对；请切换到装箱清单_箱内详件入库 / This is a carton-level shipment sheet for logistics reconciliation; select the packing-detail sheet for receipt posting')
             ws=wb[sheet]
             # Contract number is often printed in the cover/header area rather
             # than repeated in every packing-detail row. Read the small cover
@@ -224,12 +276,18 @@ def parse_file(p):
             try: txt=raw.decode('gb18030')
             except UnicodeDecodeError: raise ValueError('请另存为UTF-8 CSV / Please save as UTF-8 CSV')
         rows=list(csv.reader(io.StringIO(txt))); sheets=['CSV']; sheet='CSV'; workbook_meta=rows[:25]
-        if p.get('kind','IN')=='IN' and any(token in filename.lower() for token in ('发货','shipment','carton')):
-            raise ValueError('当前文件是箱级发货清单，仅用于物流和到货核对；请切换到装箱清单_箱内详件入库 / This is a carton-level shipment file for logistics reconciliation; use the packing-detail file for receipt posting')
         if len(rows)>10002: raise ValueError('最多10000条明细 / Maximum 10000 rows')
     else: raise ValueError('支持xlsx和csv；xls请另存 / Use xlsx or csv; convert legacy xls')
     requested=int(p.get('header',0) or 0)
     if requested<0 or requested>len(rows): raise ValueError('表头行无效 / Invalid header row')
+    shipment_tokens=('发货','发运','shipment','carton')
+    packing_tokens=('装箱','箱单','packing')
+    worksheet_shipment_hint=any(token in sheet.lower() for token in shipment_tokens)
+    worksheet_packing_hint=any(token in sheet.lower() for token in packing_tokens)
+    filename_shipment_hint=any(token in filename.lower() for token in shipment_tokens)
+    heading_text=''.join(norm(value) for row in rows[:8] for value in row if not isinstance(value,dict))
+    heading_shipment_hint=any(token in heading_text for token in ('发货清单','发运单','shipmentlist','shippinglist'))
+    heading_packing_hint=any(token in heading_text for token in ('装箱清单','装箱明细','箱单','packinglist'))
     alias_norms={key:{norm(a) for a in aliases} for key,aliases in ALIASES.items()}
     def infer(row):
         out={}
@@ -248,10 +306,11 @@ def parse_file(p):
     else:
         chosen=candidates
     if not chosen:
-        if '发货' in sheet or 'shipment' in sheet.lower() or 'carton' in sheet.lower():
-            raise ValueError('当前工作表是箱级发货清单，仅用于物流和到货核对；请切换到装箱清单_箱内详件入库 / This is a carton-level shipment sheet for logistics reconciliation; select the packing-detail sheet for receipt posting')
+        shipment_hint=worksheet_shipment_hint or heading_shipment_hint or (filename_shipment_hint and not (worksheet_packing_hint or heading_packing_hint))
+        if shipment_hint and rows:
+            chosen=[requested-1] if requested and requested-1<len(rows) else [next((i for i,row in enumerate(rows) if any(clean(x) for x in row)),0)]
         if requested and requested-1<len(rows): chosen=[requested-1]
-        else: raise ValueError('未找到包含名称、数量、单位的表头 / Could not find a header with name, quantity and unit')
+        elif not chosen: raise ValueError('未找到包含名称、数量、单位的表头 / Could not find a header with name, quantity and unit')
     headers=[clean(x) for x in rows[chosen[0]]]
     header_norms={norm(h) for h in headers if clean(h)}
     # Shipment lists describe cartons and transport parameters.  Packing
@@ -259,9 +318,9 @@ def parse_file(p):
     # markers in addition to the worksheet/file name so a generically named
     # worksheet is still routed safely.
     shipment_markers={norm(x) for x in ('包装类型','箱体尺寸','箱尺寸','外形尺寸','长宽高','毛重','净重','箱数','装箱数','包装参数')}
-    sheet_kind='shipment' if any(marker in header_norms for marker in shipment_markers) else 'packing'
-    if p.get('kind','IN') in ('IN','BASELINE') and sheet_kind=='shipment':
-        raise ValueError('当前工作表是箱级发货清单，仅用于物流和到货核对；请切换到装箱清单_箱内详件入库 / This is a carton-level shipment sheet for logistics reconciliation; select the packing-detail sheet for receipt posting')
+    packing_detail_hint=any(norm(h) in {norm('物料编码'),norm('物资编码'),norm('零件名称'),norm('零件图号')} for h in headers)
+    shipment_hint=worksheet_shipment_hint or heading_shipment_hint or (filename_shipment_hint and not (worksheet_packing_hint or heading_packing_hint or packing_detail_hint))
+    sheet_kind='shipment' if shipment_hint or any(marker in header_norms for marker in shipment_markers) else 'packing'
     inferred=infer(rows[chosen[0]])
     mapping=p.get('mapping') if p.get('mapping') is not None else inferred
     defaults=dict(p.get('defaults',{}) or {})
@@ -280,6 +339,8 @@ def parse_file(p):
         defaults['bin']=clean(defaults.get('bin')) or '待分配'
         defaults['state']=clean(defaults.get('state')) or 'AVAILABLE'
     data=[]; errors=[]; warnings=[]; generated_codes=set(); reused_codes=set(); generated_by_identity={}; skipped_layout=0; merged_rows=0
+    if sheet_kind=='shipment' and p.get('kind','IN') in ('IN','BASELINE'):
+        errors.append('发货清单是箱级物流核对表，已归档但不能直接办理入库 / Shipment lists are archived for logistics review and cannot be posted as receipts')
     selected_segment=clean(defaults.get('package')).upper()
     if p.get('segment_required') and selected_segment not in SEGMENT_CODES:
         errors.append('请选择固定标段 A1-A16 / Select one fixed segment A1-A16')
@@ -409,6 +470,216 @@ def parse_file(p):
             if old and (old['unit']!=r['unit'] or old['spec']!=r['spec'] or old['name']!=r['name']): errors.append(f"{r['code']}: 名称/规格/单位与现有编码不符 / Item identity mismatch")
     return {'headers':headers,'sheets':sheets,'sheet':sheet,'sheet_kind':sheet_kind,'header_row':chosen[0]+1,'mapping':mapping,'rows':data,'errors':list(dict.fromkeys(errors))[:100],'warnings':list(dict.fromkeys(warnings))[:100],'count':len(data),'hash':digest},raw
 
+def store_source(raw,filename):
+    raw_hash=hashlib.sha256(raw).hexdigest()
+    suffix=Path(filename).suffix.lower() or '.bin'
+    rel='sources/'+raw_hash+suffix
+    dest=DATA/rel
+    if not dest.exists():
+        dest.parent.mkdir(parents=True,exist_ok=True)
+        tmp=dest.with_name(dest.name+'.'+secrets.token_hex(4)+'.tmp')
+        tmp.write_bytes(raw)
+        try: tmp.replace(dest)
+        finally: tmp.unlink(missing_ok=True)
+    return raw_hash,rel
+
+def demo_mode():
+    return os.environ.get('MATERIALS_DEMO_MODE')=='1'
+
+
+def parse_intake(p):
+    if 'inputs' in p:
+        if p.get('kind','IN')!='IN': raise ValueError('粘贴和手动录入仅用于到货入库')
+        import intake
+        return intake.parse(p,sys.modules[__name__])
+    result,raw=parse_file(p)
+    return result,raw,p['filename']
+
+
+def intake_ai_post(p):
+    if p.get('kind')!='IN' or 'inputs' not in p: raise ValueError('本地AI仅辅助到货入库识别')
+    result,_,_=parse_intake(p)
+    return local_ai.suggest(result)
+
+
+def recognition_category(p,result):
+    if result.get('sheet_kind')=='shipment': return 'shipment'
+    if p.get('kind')=='BASELINE': return 'baseline'
+    if not result.get('rows') and result.get('errors'): return 'unclassified'
+    if result.get('sheet_kind')=='packing': return 'packing'
+    return 'unclassified'
+
+def upsert_recognition(c,p,result,raw):
+    raw_hash,source_path=store_source(raw,p.get('filename','source.bin'))
+    parser_version=RECOGNITION_PARSER_VERSION
+    row=c.execute('SELECT * FROM recognitions WHERE raw_sha256=? AND selection_hash=? AND parser_version=?',
+                  (raw_hash,result.get('selection_hash',result['hash']),parser_version)).fetchone()
+    if row and row['status']=='POSTED': return row['id'],'POSTED'
+    stamp=now()
+    category=recognition_category(p,result)
+    status='BLOCKED' if result.get('errors') else 'READY'
+    rows=result.get('rows',[])
+    segments=sorted({clean(r.get('package')) for r in rows if clean(r.get('package'))})
+    batches=sorted({clean(r.get('batch')) for r in rows if clean(r.get('batch'))})
+    snapshot={k:result.get(k) for k in ('headers','sheets','sheet','sheet_kind','header_row','mapping','rows','errors','warnings','count','hash','source_rows','layout_rows','candidates','selections','reconciliation')}
+    snapshot['corrections']=p.get('corrections',{})
+    snapshot['input_settings']=[{k:v for k,v in s.items() if k not in ('content','text','rows')} for s in p.get('inputs',[])]
+    snapshot['kind']=p.get('kind','IN')
+    snapshot['defaults']=p.get('defaults',{})
+    business_date=clean(p.get('arrival_date') or p.get('batch_date'))
+    original_name=' + '.join(dict.fromkeys(clean(s.get('filename')) for s in p.get('inputs',[]) if s.get('filename')))
+    values=(stamp,stamp,business_date,category,status,original_name or clean(p.get('original_name') or p.get('filename')) or '未命名文件',raw_hash,
+            result.get('selection_hash',result['hash']),result.get('sheet',''),parser_version,source_path,
+            json.dumps(segments,ensure_ascii=False),json.dumps(batches,ensure_ascii=False),
+            json.dumps(snapshot,ensure_ascii=False))
+    if row:
+        c.execute('''UPDATE recognitions SET updated_at=?,business_date=?,category=?,status=?,original_name=?,raw_sha256=?,
+                     selection_hash=?,sheet_name=?,parser_version=?,source_path=?,segments_json=?,batches_json=?,snapshot_json=? WHERE id=?''',
+                  (stamp,*values[2:],row['id']))
+        return row['id'],status
+    cur=c.execute('''INSERT INTO recognitions(recognized_at,updated_at,business_date,category,status,original_name,raw_sha256,
+                   selection_hash,sheet_name,parser_version,source_path,segments_json,batches_json,snapshot_json)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',values)
+    return cur.lastrowid,status
+
+def preview_post(p):
+    result,raw,archive_name=parse_intake(p)
+    p=dict(p,filename=archive_name)
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        recognition_id,status=upsert_recognition(c,p,result,raw)
+        result['recognition_id']=recognition_id
+        result['recognition_status']=status
+    return result
+
+def recognition_date_bound(value):
+    day=date.fromisoformat(value)
+    return datetime.combine(day,time.min,RECOGNITION_TIMEZONE).astimezone(timezone.utc).isoformat(timespec='seconds')
+
+def recognition_display(record, snapshot):
+    if record['original_name'].endswith('.intake.json'):
+        settings=snapshot.get('input_settings') or []
+        names=list(dict.fromkeys(clean(s.get('filename')) for s in settings if isinstance(s,dict) and s.get('filename')))
+        mode=next((s.get('source') for s in settings if isinstance(s,dict)),None)
+        record['original_name']=' + '.join(names) or {'manual':'手动录入','paste':'粘贴内容'}.get(mode,record['original_name'])
+    record['can_reopen']=record['has_source'] and record['status'] in ('READY','BLOCKED') and snapshot.get('kind')=='IN'
+    errors=snapshot.get('errors') or []
+    record['issue_count']=len(errors)
+    record['issue_summary']=clean(errors[0]) if errors else ''
+    return record
+
+
+def recognition_list(filters):
+    start=clean(filters.get('from',[''])[0])
+    end=clean(filters.get('to',[''])[0])
+    status=clean(filters.get('status',[''])[0]).upper()
+    category=clean(filters.get('category',[''])[0]).lower()
+    segment=clean(filters.get('segment',[''])[0])
+    batch=clean(filters.get('batch',[''])[0])
+    try: limit=max(1,min(int(filters.get('limit',['100'])[0]),200))
+    except (ValueError,TypeError): limit=100
+    try: offset=max(0,int(filters.get('offset',['0'])[0]))
+    except (ValueError,TypeError): offset=0
+    clauses=[]; params=[]
+    if start: clauses.append('r.recognized_at>=?'); params.append(recognition_date_bound(start))
+    if end:
+        end_exclusive=(date.fromisoformat(end)+timedelta(days=1)).isoformat()
+        clauses.append('r.recognized_at<?'); params.append(recognition_date_bound(end_exclusive))
+    if status: clauses.append('r.status=?'); params.append(status)
+    if category: clauses.append('r.category=?'); params.append(category)
+    where=(' WHERE '+' AND '.join(clauses)) if clauses else ''
+    with connect() as c:
+        rows=c.execute('''SELECT r.id,r.recognized_at,r.updated_at,r.business_date,r.category,r.status,r.original_name,r.raw_sha256,
+                          r.sheet_name,r.source_path,r.segments_json,r.batches_json,r.snapshot_json,
+                          CASE WHEN d.id IS NULL THEN NULL ELSE r.document_id END document_id
+                          FROM recognitions r LEFT JOIN documents d ON d.id=r.document_id'''+where+''' ORDER BY r.recognized_at DESC,r.id DESC''',params).fetchall()
+    records=[]
+    for row in rows:
+        r=dict(row); r['segments']=json.loads(r.pop('segments_json') or '[]'); r['batches']=json.loads(r.pop('batches_json') or '[]')
+        r['has_source']=bool(r.pop('source_path'))
+        snapshot=json.loads(r.pop('snapshot_json') or '{}')
+        if segment and segment not in r['segments']: continue
+        if batch and batch not in r['batches']: continue
+        records.append(recognition_display(r,snapshot))
+    return {'rows':records[offset:offset+limit],'total':len(records),'offset':offset,'limit':limit,'has_more':offset+limit<len(records)}
+
+def recognition_detail(recognition_id):
+    with connect() as c:
+        row=c.execute('SELECT r.*,d.id linked_document_exists FROM recognitions r LEFT JOIN documents d ON d.id=r.document_id WHERE r.id=?',(int(recognition_id),)).fetchone()
+    if not row: raise ValueError('识别归档不存在 / Recognition archive not found')
+    record=dict(row); record['segments']=json.loads(record.pop('segments_json') or '[]'); record['batches']=json.loads(record.pop('batches_json') or '[]')
+    if not record.pop('linked_document_exists',None): record['document_id']=None
+    record['snapshot']=json.loads(record.pop('snapshot_json'))
+    record['has_source']=bool(record.get('source_path'))
+    return recognition_display(record,record['snapshot'])
+
+def recognition_reopen(recognition_id):
+    record=recognition_detail(recognition_id)
+    if record['status'] not in ('READY','BLOCKED'):
+        raise ValueError('只有未确认的归档可以继续处理 / Only unposted archives can be reopened')
+    rel=record.get('source_path') or ''
+    source_root=(DATA/'sources').resolve()
+    path=(DATA/rel).resolve()
+    try: path.relative_to(source_root)
+    except ValueError: raise ValueError('原件路径无效 / Invalid source path') from None
+    if not path.is_file() or path.stat().st_size>17*1024*1024:
+        raise ValueError('归档原件不存在或超过处理上限 / Source is missing or exceeds the intake limit')
+    try: saved=json.loads(path.read_text(encoding='utf-8'))
+    except (UnicodeDecodeError,json.JSONDecodeError): raise ValueError('这条归档无法继续处理，请从入库办理重新上传原件 / Archive cannot be reopened; upload the source again') from None
+    if saved.get('format')!='warehouse-intake-v1' or not isinstance(saved.get('sources'),list):
+        raise ValueError('这条归档无法继续处理，请从入库办理重新上传原件 / Archive cannot be reopened; upload the source again')
+    inputs=saved['sources']
+    settings=record['snapshot'].get('input_settings') or []
+    for i,source in enumerate(inputs):
+        if not isinstance(source,dict): raise ValueError('归档来源格式无效 / Invalid archived input')
+        if i<len(settings) and isinstance(settings[i],dict): source.update(settings[i])
+    for selection in record['snapshot'].get('selections') or []:
+        index=selection.get('input')
+        if isinstance(index,int) and 0<=index<len(inputs):
+            inputs[index].setdefault('sheet',selection.get('sheet'))
+            inputs[index].setdefault('header',selection.get('header_row'))
+    if not 1<=len(inputs)<=4: raise ValueError('归档没有可恢复的录入来源 / No restorable inputs in archive')
+    original_name=record['original_name']
+    if original_name.endswith('.intake.json'):
+        original_name=next((s.get('filename') for s in inputs if s.get('filename')),'未命名文件')
+    snapshot=record['snapshot']
+    return {'id':record['id'],'inputs':inputs,'corrections':snapshot.get('corrections') or {},
+            'defaults':snapshot.get('defaults') or {},'kind':snapshot.get('kind') or 'IN',
+            'arrival_date':record['business_date'],'original_name':original_name}
+
+def cancel_recognition(p):
+    rec_id=int(p.get('id') or 0)
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        row=c.execute('SELECT status FROM recognitions WHERE id=?',(rec_id,)).fetchone()
+        if not row: raise ValueError('识别归档不存在 / Recognition archive not found')
+        if row['status']=='POSTED': raise ValueError('已入账记录不能取消 / Posted recognition cannot be cancelled')
+        c.execute("UPDATE recognitions SET status='CANCELLED',updated_at=? WHERE id=?",(now(),rec_id))
+    return {'ok':True,'id':rec_id,'status':'CANCELLED'}
+
+def delete_recognition(p):
+    result=delete_recognitions(dict(p,ids=[p.get('id')]))
+    return dict(result,id=result['deleted'][0])
+
+def delete_recognitions(p):
+    verify_admin_password(p.get('password'))
+    ids=p.get('ids')
+    if not isinstance(ids,list) or not 1<=len(ids)<=1000:
+        raise ValueError('请选择1至1000条识别记录 / Select 1–1000 recognition records')
+    if any(isinstance(i,bool) or not str(i).isdigit() or int(i)<=0 for i in ids):
+        raise ValueError('识别记录编号无效 / Invalid recognition ID')
+    ids=list(dict.fromkeys(int(i) for i in ids))
+    with connect() as c:
+        c.execute('BEGIN IMMEDIATE')
+        for rec_id in ids:
+            old=c.execute('SELECT * FROM recognitions WHERE id=?',(rec_id,)).fetchone()
+            if not old: raise ValueError(f'识别归档 #{rec_id} 不存在，本次未删除 / Recognition archive not found; nothing deleted')
+            c.execute('INSERT INTO admin_actions(action,document_id,document_number,reason,operator,created) VALUES(?,?,?,?,?,?)',
+                      ('RECOGNITION_DELETE',old['document_id'] or 0,f"识别归档 #{rec_id}：{old['original_name']}",json.dumps(dict(old),ensure_ascii=False),'密码验证',now()))
+            c.execute('DELETE FROM recognitions WHERE id=?',(rec_id,))
+    # Original files can be shared by other archives and posted receipts.
+    return {'ok':True,'deleted':ids,'stock_changed':False}
+
 def newdoc(c,p,kind,file_hash=None,source_path=None,reverse_of=None):
     key=required(p.get('request_key'),'请求编号 / Request key')
     row=c.execute('SELECT id FROM documents WHERE request_key=?',(key,)).fetchone()
@@ -429,10 +700,12 @@ def item(c,r):
         if any(old[k]!=r[k] for k in ('name','spec','unit')): raise ValueError('同编码名称/规格/单位冲突 / Item identity conflict')
     else: c.execute('INSERT INTO items(code,name,spec,unit,package,attribute) VALUES(?,?,?,?,?,?)',tuple(r.get(k,'') for k in ('code','name','spec','unit','package','attribute')))
 def position(c,code,batch,box,warehouse,bin,state,contents=None):
+    if isinstance(contents,str): contents=json.loads(contents or '[]')
+    if contents is not None and not isinstance(contents,list): raise ValueError('箱内明细格式无效')
     encoded=json.dumps(contents or [],ensure_ascii=False)
     c.execute('INSERT OR IGNORE INTO stock(code,batch,box,warehouse,bin,state,qty,contents) VALUES(?,?,?,?,?,?,0,?)',(code,batch,box,warehouse,bin,state,encoded))
     row=c.execute('SELECT * FROM stock WHERE code=? AND batch=? AND box=? AND warehouse=? AND bin=? AND state=?',(code,batch,box,warehouse,bin,state)).fetchone()
-    if contents and not clean(row['contents']):
+    if contents and clean(row['contents']) in ('','[]'):
         c.execute('UPDATE stock SET contents=? WHERE id=?',(encoded,row['id']))
         row=c.execute('SELECT * FROM stock WHERE id=?',(row['id'],)).fetchone()
     return row
@@ -469,7 +742,8 @@ def validate_receipt_limits(c,rows):
             raise ValueError(f'{code}: 入库数量将超过合同/设计数量（已有 {number(received)}，本次 {number(amount)}，上限 {number(limit)}） / Receipt would exceed contract/design quantity (received {number(received)}, this receipt {number(amount)}, limit {number(limit)})')
 
 def import_post(p):
-    result,raw=parse_file(p)
+    result,raw,archive_name=parse_intake(p)
+    p=dict(p,filename=archive_name)
     kind=p.get('kind','IN')
     if kind not in ('IN','BASELINE'): raise ValueError('无效导入类型 / Invalid import type')
     sheet_label=result['sheet'].lower()
@@ -477,15 +751,19 @@ def import_post(p):
     # This keeps the operator-facing message about choosing the packing-detail
     # sheet even when the same workbook was already used for a receipt.
     if result['sheet']=='CSV': sheet_label=f"{sheet_label} {p.get('filename','')}".lower()
-    if kind=='IN' and ('发货' in sheet_label or 'shipment' in sheet_label or 'carton' in sheet_label):
+    if kind=='IN' and 'inputs' not in p and ('发货' in sheet_label or 'shipment' in sheet_label or 'carton' in sheet_label):
         raise ValueError('发货清单是箱级物流核对表，请选择装箱清单办理入库 / Shipment list is for carton-level logistics reconciliation; select the packing-detail sheet for receipt posting')
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         prior=c.execute('SELECT id FROM documents WHERE request_key=?',(p.get('request_key'),)).fetchone()
         if prior: return {'id':prior['id']}
+        recognition_id,_=upsert_recognition(c,p,result,raw)
+        submitted_id=p.get('recognition_id')
+        if submitted_id is not None and int(submitted_id)!=recognition_id:
+            raise ValueError('识别归档与当前文件不匹配，请重新预览 / Recognition archive does not match this file; preview again')
         if result['errors']: raise ValueError('\n'.join(result['errors'][:12]))
         if kind=='IN': validate_receipt_limits(c,result['rows'])
-        path='sources/'+result['hash']+Path(p['filename']).suffix.lower()
+        _,path=store_source(raw,p['filename'])
         doc,_=newdoc(c,{**p,'arrival_date':p.get('arrival_date') or p.get('batch_date') or ''},kind,result['hash'],path)
         for r in result['rows']:
             item(c,r)
@@ -497,8 +775,7 @@ def import_post(p):
                 movement(c,doc,s['id'],r['amount'])
                 c.execute('INSERT OR IGNORE INTO batches VALUES(?,?,?,?)',(r['batch'],clean(p.get('party')),'ARRIVED',now()))
             line(c,doc,r,r['amount'])
-        dest=DATA/path; dest.parent.mkdir(exist_ok=True)
-        if not dest.exists(): dest.write_bytes(raw)
+        c.execute("UPDATE recognitions SET status='POSTED',document_id=?,updated_at=? WHERE id=?",(doc,now(),recognition_id))
     return {'id':doc}
 
 def stock_post(p):
@@ -516,6 +793,11 @@ def stock_post(p):
             s=c.execute('SELECT s.*,i.name,i.spec,i.unit FROM stock s JOIN items i ON i.code=s.code WHERE s.id=?',(int(r['stock_id']),)).fetchone()
             if not s: raise ValueError('库位记录不存在 / Position not found')
             s=dict(s); q=units(r['qty'])
+            remark=r.get('remark','')
+            if remark is None: remark=''
+            if not isinstance(remark,str) or len(remark)>1000: raise ValueError('备注须为文字且不超过1000字')
+            # Outgoing line attributes are transaction notes, separate from item attributes.
+            s['attribute']=clean(remark)
             if kind=='OUT' and s['state']!='AVAILABLE': raise ValueError('仅可用库存可领用 / Only available stock may be issued')
             if kind=='HANDOVER' and s['state']!='SPARE': raise ValueError('请先预留备品 / Reserve spares before handover')
             movement(c,doc,s['id'],-q); line(c,doc,s,-q)
@@ -524,7 +806,7 @@ def stock_post(p):
                 if state not in STATES: raise ValueError('状态无效 / Invalid state')
                 wh=required(p.get('warehouse'),'仓库 / Warehouse') if kind=='MOVE' else s['warehouse']
                 loc=required(p.get('bin'),'库位 / Bin') if kind=='MOVE' else s['bin']
-                target=position(c,s['code'],s['batch'],s['box'],wh,loc,state)
+                target=position(c,s['code'],s['batch'],s['box'],wh,loc,state,s.get('contents'))
                 if target['id']==s['id']: raise ValueError('目标与原记录相同 / Same destination')
                 movement(c,doc,target['id'],q)
                 line(c,doc,dict(s,warehouse=wh,bin=loc,state=state),q)
@@ -568,7 +850,6 @@ def verify_admin_password(value):
 
 def admin_password_set(p):
     new=required(p.get('new_password'),'新管理员密码 / New administrator password',64)
-    if len(new)<6: raise ValueError('管理员密码至少6位 / Administrator password must be at least 6 characters')
     if clean(os.environ.get('MATERIALS_ADMIN_PASSWORD')):
         raise ValueError('密码由本机启动配置管理，请修改启动配置 / Password is managed by local startup configuration')
     if admin_password_configured(): verify_admin_password(p.get('current_password'))
@@ -608,13 +889,14 @@ def admin_delete_in_transaction(c,doc_id,reason,operator):
     c.execute('DELETE FROM movements WHERE doc_id=?',(old['id'],))
     c.execute('DELETE FROM lines WHERE doc_id=?',(old['id'],))
     c.execute('DELETE FROM documents WHERE id=?',(old['id'],))
+    c.execute("UPDATE recognitions SET status='CANCELLED',document_id=NULL,updated_at=? WHERE document_id=?",(now(),old['id']))
     for code in affected_codes: cleanup_orphan_item(c,code)
     return old['number']
 
 def admin_delete(p):
     verify_admin_password(p.get('password'))
-    reason=required(p.get('purpose'),'删除原因 / Deletion reason')
-    operator=required(p.get('operator'),'管理员 / Administrator')
+    reason=clean(p.get('purpose')) or '密码确认删除'
+    operator=clean(p.get('operator')) or '密码验证'
     with connect() as c:
         c.execute('BEGIN IMMEDIATE')
         deleted=admin_delete_in_transaction(c,p['id'],reason,operator)
@@ -622,8 +904,8 @@ def admin_delete(p):
 
 def admin_delete_batch(p):
     verify_admin_password(p.get('password'))
-    reason=required(p.get('purpose'),'删除原因 / Deletion reason')
-    operator=required(p.get('operator'),'管理员 / Administrator')
+    reason=clean(p.get('purpose')) or '密码确认删除'
+    operator=clean(p.get('operator')) or '密码验证'
     ids=p.get('ids') or []
     if not isinstance(ids,list) or not ids or len(ids)>100: raise ValueError('请选择1至100张单据 / Select 1–100 documents')
     with connect() as c:
@@ -678,18 +960,268 @@ def reconciliation(c,items):
     """):
         stock_totals[(row['code'],row['package'])]=int(row['total'] or 0)
     issues=[]
+    # 先建索引，避免每条异常都遍历整个物资列表。
+    by_code={r.get('code'):r for r in items}
     for key in sorted(set(movement_totals)|set(stock_totals)):
         movement_total=movement_totals.get(key,0); stock_total=stock_totals.get(key,0)
         if movement_total!=stock_total:
             code,package=key
-            name=next((r.get('name','') for r in items if r.get('code')==code),'')
-            unit=next((r.get('unit','') for r in items if r.get('code')==code),'')
+            source=by_code.get(code,{})
+            name=source.get('name','')
+            unit=source.get('unit','')
             issues.append({'kind':'ledger_mismatch','code':code,'name':name,'package':package,'unit':unit,'expected':number(movement_total),'actual':number(stock_total),'difference':number(stock_total-movement_total)})
     for row in items:
         if row.get('current') is None or row.get('received') is None: continue
         if float(row['received'])>float(row['current'])+1e-9:
             issues.append({'kind':'over_contract','code':row['code'],'name':row['name'],'package':row.get('package',''),'unit':row.get('unit',''),'expected':row['current'],'actual':row['received'],'difference':row['received']-row['current']})
     return {'ok':not issues,'issue_count':len(issues),'issues':issues}
+
+LEDGER_SQL = '''
+    SELECT m.id AS movement_id, m.delta, d.id AS doc_id, d.number, d.kind,
+           d.external_ref, d.created, d.arrival_date, d.operator, d.party,
+           d.purpose, (d.source_path<>'') AS has_source, s.code, i.name, i.spec, i.unit, i.package,
+           s.batch, s.box, s.warehouse, s.bin, s.state
+    FROM movements m
+    JOIN documents d ON d.id=m.doc_id
+    JOIN stock s ON s.id=m.stock_id
+    JOIN items i ON i.code=s.code
+'''
+LEDGER_KINDS = ('IN', 'OUT', 'HANDOVER', 'MOVE', 'STATE', 'REV', 'BASELINE')
+
+def ledger_filter(kind, q):
+    """Build the WHERE clause shared by the ledger count and page queries."""
+    where, args = [], []
+    if kind:
+        if kind not in LEDGER_KINDS: raise ValueError('流水类型无效 / Invalid ledger kind')
+        where.append('d.kind=?'); args.append(kind)
+    if q:
+        # Chinese text has no case, LOWER() is only meaningful for codes/refs.
+        like = '%' + q.lower()[:100] + '%'
+        columns = ('d.number', 'd.external_ref', 'd.party', 'd.purpose', 'd.operator',
+                   's.code', 's.batch', 's.box', 's.warehouse', 's.bin',
+                   'i.name', 'i.spec', 'i.package', 'i.unit', 's.state')
+        where.append('(' + ' OR '.join(f'LOWER({col}) LIKE ?' for col in columns) + ')')
+        args.extend([like] * len(columns))
+    return (' WHERE ' + ' AND '.join(where) if where else ''), args
+
+def ledger_page(c, limit=LEDGER_PAGE_SIZE, offset=0, kind='', q='', stock_id=None):
+    """Return one page of movements, newest first, plus the filtered total."""
+    clause, args = ledger_filter(kind, q)
+    if stock_id is not None:
+        clause += (' AND ' if clause else ' WHERE ') + 'EXISTS (SELECT 1 FROM stock target WHERE target.id=? AND s.code=target.code AND s.batch=target.batch AND s.box=target.box)'
+        args.append(stock_id)
+    limit = max(1, min(int(limit), LEDGER_MAX_PAGE_SIZE))
+    offset = max(0, int(offset))
+    total = c.execute('SELECT COUNT(*) FROM movements m '
+                      'JOIN documents d ON d.id=m.doc_id '
+                      'JOIN stock s ON s.id=m.stock_id '
+                      'JOIN items i ON i.code=s.code' + clause, args).fetchone()[0]
+    rows = []
+    for r in c.execute(LEDGER_SQL + clause + ' ORDER BY m.id DESC LIMIT ? OFFSET ?', args + [limit, offset]):
+        row = dict(r); row['delta'] = number(row['delta']); row['qty'] = abs(row['delta'])
+        row['direction'] = 'IN' if row['delta'] > 0 else 'OUT'
+        row['date'] = row['arrival_date'] or row['created']
+        rows.append(row)
+    return {'rows': rows, 'total': total, 'offset': offset, 'limit': limit,
+            'has_more': offset + len(rows) < total}
+
+def build_items(c):
+    """Every item with its computed totals.
+
+    Shared by the overview page, the CSV export and the paged item table so all
+    three always report identical numbers.  The aggregates are fetched in four
+    batch queries; the previous per-item version ran 7 SQL statements per item
+    (35,000 statements at 5,000 items) and took over five minutes per refresh.
+    """
+    change_map={row['code']:row['total'] for row in c.execute(
+        'SELECT code,COALESCE(SUM(delta),0) total FROM changes GROUP BY code')}
+    # 到货量要排除备品，出库与移交不排除，所以按「是否备品」分组一次取全。
+    line_agg={}
+    for row in c.execute("SELECT l.code,d.kind,CASE WHEN l.state='SPARE' THEN 1 ELSE 0 END spare,"
+                         "COALESCE(SUM(l.qty),0) total FROM lines l JOIN documents d ON l.doc_id=d.id "
+                         "WHERE d.reversed_by IS NULL GROUP BY l.code,d.kind,spare"):
+        line_agg[(row['code'],row['kind'],row['spare'])]=row['total']
+    date_map={}
+    for row in c.execute("SELECT l.code,d.kind,"
+                         "MIN(CASE WHEN d.kind='IN' AND d.arrival_date<>'' THEN d.arrival_date ELSE d.created END) first_date,"
+                         "MAX(CASE WHEN d.kind='IN' AND d.arrival_date<>'' THEN d.arrival_date ELSE d.created END) last_date "
+                         "FROM lines l JOIN documents d ON l.doc_id=d.id "
+                         "WHERE d.kind IN ('IN','OUT') AND d.reversed_by IS NULL GROUP BY l.code,d.kind"):
+        date_map[(row['code'],row['kind'])]=(row['first_date'],row['last_date'])
+    stock_map={row['code']:(row['onhand'],row['spare']) for row in c.execute(
+        "SELECT code,COALESCE(SUM(CASE WHEN state<>'SPARE' THEN qty ELSE 0 END),0) onhand,"
+        "COALESCE(SUM(CASE WHEN state='SPARE' THEN qty ELSE 0 END),0) spare FROM stock GROUP BY code")}
+    items=[]
+    for r in c.execute('SELECT i.*,d.qty baseline FROM items i LEFT JOIN design d ON d.code=i.code ORDER BY i.code'):
+        r=dict(r); code=r['code']
+        change=change_map.get(code,0)
+        r['change']=number(change); r['current']=number(r['baseline']+change) if r['baseline'] is not None else None
+        r['baseline']=number(r['baseline']) if r['baseline'] is not None else None
+        for name,kind in [('received','IN'),('issued','OUT'),('handed','HANDOVER')]:
+            # Reserved spares are tracked separately from the contract's main
+            # design quantity and must not inflate the arrived/remaining view.
+            non_spare=line_agg.get((code,kind,0),0)
+            q=non_spare if name=='received' else non_spare+line_agg.get((code,kind,1),0)
+            r[name]=number(abs(q))
+        for kind,prefix in [('IN','inbound'),('OUT','outbound')]:
+            first_date,last_date=date_map.get((code,kind),('',''))
+            r[prefix+'_first']=first_date or ''; r[prefix+'_last']=last_date or ''
+        onhand,spare=stock_map.get(code,(0,0))
+        r['onhand']=number(onhand); r['spare']=number(spare)
+        r['outstanding']=max(0,r['current']-r['received']) if r['current'] is not None else None
+        items.append(r)
+    return items
+
+
+def blank_contract(code):
+    return {'code':code,'item_codes':[],'item_count':0,'baseline':None,'change':0,'current':None,
+            'received':0,'issued':0,'handed':0,'onhand':0,'spare':0,'outstanding':None,
+            'unit_totals':{},'inbound_first':'','inbound_last':'','outbound_first':'','outbound_last':''}
+
+
+def build_contracts(items):
+    """Roll items up into the fixed segments.
+
+    Carries item codes plus a count instead of a second copy of every item row.
+    That nested copy used to double the response size; the segment page now
+    resolves the codes against the paged item table instead.
+    """
+    contracts={}
+    for r in items:
+        key=clean(r.get('package')) or '未指定标段'
+        g=contracts.setdefault(key,blank_contract(key))
+        g['item_codes'].append(r['code']); g['item_count']+=1
+        for k in ('baseline','change','current','received','issued','handed','onhand','spare','outstanding'):
+            if r[k] is not None:
+                g[k]=r[k] if g[k] is None else g[k]+r[k]
+        unit=r.get('unit') or '—'; totals=g['unit_totals'].setdefault(unit,{'current':None,'received':0,'issued':0,'onhand':0,'spare':0,'outstanding':0})
+        for k in ('current','received','issued','onhand','spare','outstanding'):
+            if r[k] is not None: totals[k]=r[k] if totals[k] is None else totals[k]+r[k]
+        for k in ('inbound_first','inbound_last','outbound_first','outbound_last'):
+            val=r.get(k) or ''
+            if val and (not g[k] or (k.endswith('_first') and val<g[k]) or (k.endswith('_last') and val>g[k])): g[k]=val
+    # Keep the fixed project segments visible on the leadership view even
+    # before their first receipt is posted.
+    for code, _, _ in SEGMENTS:
+        contracts.setdefault(code,blank_contract(code))
+    return list(contracts.values())
+
+
+def item_counts(items):
+    """Headline counters, so the materials page does not need every row loaded."""
+    return {'total':len(items),
+            'in_stock':sum(1 for r in items if number(r.get('onhand') or 0)>0),
+            'outstanding':sum(1 for r in items if number(r.get('outstanding') or 0)>0)}
+
+
+def slice_items(items,limit,offset=0):
+    """One bounded page out of an already-built item list."""
+    limit=max(1,min(int(limit),ITEMS_MAX_PAGE_SIZE)); offset=max(0,int(offset))
+    page=items[offset:offset+limit]
+    return {'rows':page,'total':len(items),'offset':offset,'limit':limit,
+            'has_more':offset+len(page)<len(items)}
+
+
+def items_page(c,limit=ITEMS_PAGE_SIZE,offset=0,q='',package=''):
+    """Filter the whole catalogue on the server, then return a single page.
+
+    Filtering here rather than in the browser is what makes search honest: the
+    page only ever holds a slice, so a client-side filter would silently miss
+    every match that has not been paged in yet.
+    """
+    rows=build_items(c)
+    if package: rows=[r for r in rows if (clean(r.get('package')) or '未指定标段')==package]
+    if q:
+        needle=q.lower()[:100]
+        rows=[r for r in rows if any(needle in str(r.get(col) or '').lower() for col in ITEM_SEARCH_FIELDS)]
+    return slice_items(rows,limit,offset)
+
+
+def project_arrivals(c):
+    """Small read-only major-equipment summary; unknown matches stay null."""
+    packages=tuple(sorted({item['package'] for item in PROJECT_ARRIVAL_TARGETS}))
+    marks=','.join('?' for _ in packages)
+    rows=[dict(row) for row in c.execute(
+        f'''SELECT i.code,i.name,i.spec,i.unit,i.package,d.qty baseline,
+                   COALESCE(SUM(ch.delta),0) change
+            FROM items i LEFT JOIN design d ON d.code=i.code
+            LEFT JOIN changes ch ON ch.code=i.code
+            WHERE i.package IN ({marks}) GROUP BY i.code''', packages)]
+    norm=lambda value: re.sub(r'\s+','',unicodedata.normalize('NFKC',clean(value))).casefold()
+    matched_codes={}
+    candidates_by_target={}
+    for target in PROJECT_ARRIVAL_TARGETS:
+        aliases={norm(name) for name in target['aliases']}
+        matches=[row for row in rows if row['package']==target['package'] and norm(row['name']) in aliases]
+        candidates_by_target[target['key']]=matches
+        for row in matches: matched_codes[row['code']]=None
+    receipts={}
+    if matched_codes:
+        codes=tuple(matched_codes)
+        code_marks=','.join('?' for _ in codes)
+        receipts={row['code']:row['qty'] for row in c.execute(
+            f'''SELECT l.code,COALESCE(SUM(l.qty),0) qty
+                FROM lines l JOIN documents d ON d.id=l.doc_id
+                WHERE l.code IN ({code_marks}) AND d.kind='IN'
+                  AND d.reversed_by IS NULL AND l.state<>'SPARE'
+                GROUP BY l.code''', codes)}
+
+    items=[]
+    transit_reason='当前没有可追溯的数量化发运/清关记录；不代表SARS EDI实时数据'
+    for target in PROJECT_ARRIVAL_TARGETS:
+        lot=LOT_CROSSWALK.get(target['package'])
+        matches=candidates_by_target[target['key']]
+        valid=[row for row in matches if clean(row['unit'])==target['unit']]
+        if not matches:
+            valid=[None]
+        identities={}
+        for row in valid:
+            if row is not None:
+                identity=(norm(row['name']),norm(row['spec']),clean(row['unit']))
+                identities[identity]=identities.get(identity,0)+1
+        for row in valid:
+            item={'view':target['view'],'equipment_key':target['key'],'name':target['name'],
+                  'lot_code':lot,'spec':None,'unit':target['unit'],'received':None,
+                  'in_transit':None,'total':None,'total_basis':'unknown','rate':None,
+                  'status':'unmapped','reason':'未找到与设备类别、标段及单位明确匹配的物资档案',
+                  'in_transit_reason':transit_reason}
+            if target.get('model_display_count') is not None:
+                item['model_display_count']=target['model_display_count']
+            if row is None:
+                items.append(item)
+                continue
+            item['spec']=clean(row['spec']) or None
+            item['unit']=clean(row['unit']) or None
+            identity=(norm(row['name']),norm(row['spec']),clean(row['unit']))
+            if clean(row['unit'])!=target['unit']:
+                item['status']='unit_mismatch'; item['reason']='物资档案单位与设备统计单位不一致，未纳入数量'
+            elif identities.get(identity,0)>1:
+                item['status']='multiple_matches'; item['reason']='相同名称、规格和单位对应多个物资编码，未合并计数'
+            else:
+                item['status']='mapped'; item['reason']=''
+                item['received']=number(receipts.get(row['code'],0))
+                if row['baseline'] is not None:
+                    item['total']=number(row['baseline']+row['change'])
+                    item['total_basis']='warehouse_design'
+                    if item['total']>0: item['rate']=item['received']/item['total']
+                    else: item['reason']='仓储设计总量为零或无效，到货率未计算'
+                elif not item['reason']:
+                    item['reason']='仓储设计总量待补，到货率未计算'
+                if not item['spec']:
+                    item['reason']=(item['reason']+'；' if item['reason'] else '')+'规格型号待设备清单确认'
+            items.append(item)
+        for row in matches:
+            if clean(row['unit'])==target['unit']: continue
+            item={'view':target['view'],'equipment_key':target['key'],'name':target['name'],
+                  'lot_code':lot,'spec':clean(row['spec']) or None,'unit':clean(row['unit']) or None,
+                  'received':None,'in_transit':None,'total':None,'total_basis':'unknown','rate':None,
+                  'status':'unit_mismatch','reason':'物资档案单位与设备统计单位不一致，未纳入数量',
+                  'in_transit_reason':transit_reason}
+            if target.get('model_display_count') is not None:
+                item['model_display_count']=target['model_display_count']
+            items.append(item)
+    return {'generated_at':now(),'items':items}
+
 
 def overview():
     with connect() as c:
@@ -701,63 +1233,30 @@ def overview():
         stock_balance_fields(c,stocks)
         docs=[dict(r) for r in c.execute('SELECT * FROM documents ORDER BY id DESC')]
         for d in docs: d.pop('file_hash'); d.pop('request_key'); d.pop('source_path')
-        items=[]
-        for r in c.execute('SELECT i.*,d.qty baseline FROM items i LEFT JOIN design d ON d.code=i.code ORDER BY i.code'):
-            r=dict(r); code=r['code']
-            change=c.execute('SELECT COALESCE(SUM(delta),0) FROM changes WHERE code=?',(code,)).fetchone()[0]
-            r['change']=number(change); r['current']=number(r['baseline']+change) if r['baseline'] is not None else None
-            r['baseline']=number(r['baseline']) if r['baseline'] is not None else None
-            for name,kinds in [('received',('IN',)),('issued',('OUT',)),('handed',('HANDOVER',))]:
-                # Reserved spares are tracked separately from the contract's main
-                # design quantity and must not inflate the arrived/remaining view.
-                state_filter=" AND l.state!='SPARE'" if name=='received' else ''
-                q=c.execute(f'SELECT COALESCE(SUM(l.qty),0) FROM lines l JOIN documents d ON l.doc_id=d.id WHERE l.code=? AND d.kind=? AND d.reversed_by IS NULL{state_filter}',(code,kinds[0])).fetchone()[0]
-                r[name]=number(abs(q))
-            dates=c.execute("SELECT d.kind,MIN(CASE WHEN d.kind='IN' AND d.arrival_date<>'' THEN d.arrival_date ELSE d.created END) first_date,MAX(CASE WHEN d.kind='IN' AND d.arrival_date<>'' THEN d.arrival_date ELSE d.created END) last_date FROM lines l JOIN documents d ON l.doc_id=d.id WHERE l.code=? AND d.kind IN ('IN','OUT') AND d.reversed_by IS NULL GROUP BY d.kind",(code,)).fetchall()
-            for dr in dates:
-                prefix='inbound' if dr['kind']=='IN' else 'outbound'
-                r[prefix+'_first']=dr['first_date']; r[prefix+'_last']=dr['last_date']
-            r.setdefault('inbound_first',''); r.setdefault('inbound_last',''); r.setdefault('outbound_first',''); r.setdefault('outbound_last','')
-            r['onhand']=number(c.execute("SELECT COALESCE(SUM(qty),0) FROM stock WHERE code=? AND state!='SPARE'",(code,)).fetchone()[0])
-            r['spare']=number(c.execute("SELECT COALESCE(SUM(qty),0) FROM stock WHERE code=? AND state='SPARE'",(code,)).fetchone()[0])
-            r['outstanding']=max(0,r['current']-r['received']) if r['current'] is not None else None
-            items.append(r)
-        contracts={}
-        for r in items:
-            key=clean(r.get('package')) or '未指定标段'
-            g=contracts.setdefault(key,{'code':key,'items':[],'baseline':None,'change':0,'current':None,'received':0,'issued':0,'handed':0,'onhand':0,'spare':0,'outstanding':None,'unit_totals':{},'inbound_first':'','inbound_last':'','outbound_first':'','outbound_last':''})
-            g['items'].append(r)
-            for k in ('baseline','change','current','received','issued','handed','onhand','spare','outstanding'):
-                if r[k] is not None:
-                    g[k]=r[k] if g[k] is None else g[k]+r[k]
-            unit=r.get('unit') or '—'; totals=g['unit_totals'].setdefault(unit,{'current':None,'received':0,'issued':0,'onhand':0,'spare':0,'outstanding':0})
-            for k in ('current','received','issued','onhand','spare','outstanding'):
-                if r[k] is not None: totals[k]=r[k] if totals[k] is None else totals[k]+r[k]
-            for k in ('inbound_first','inbound_last','outbound_first','outbound_last'):
-                val=r.get(k) or ''
-                if val and (not g[k] or (k.endswith('_first') and val<g[k]) or (k.endswith('_last') and val>g[k])): g[k]=val
-        # Keep the fixed project segments visible on the leadership view even
-        # before their first receipt is posted.
-        for code, _, _ in SEGMENTS:
-            contracts.setdefault(code, {'code':code,'items':[],'baseline':None,'change':0,'current':None,'received':0,'issued':0,'handed':0,'onhand':0,'spare':0,'outstanding':None,'unit_totals':{},'inbound_first':'','inbound_last':'','outbound_first':'','outbound_last':''})
-        ledger=[]
-        ledger_sql='''
-            SELECT m.id AS movement_id, m.delta, d.id AS doc_id, d.number, d.kind,
-                   d.external_ref, d.created, d.arrival_date, d.operator, d.party,
-                   d.purpose, s.code, i.name, i.spec, i.unit, i.package,
-                   s.batch, s.box, s.warehouse, s.bin, s.state
-            FROM movements m
-            JOIN documents d ON d.id=m.doc_id
-            JOIN stock s ON s.id=m.stock_id
-            JOIN items i ON i.code=s.code
-            ORDER BY m.id DESC
-        '''
-        for r in c.execute(ledger_sql):
-            row=dict(r); row['delta']=number(row['delta']); row['qty']=abs(row['delta'])
-            row['direction']='IN' if row['delta']>0 else 'OUT'
-            row['date']=row['arrival_date'] or row['created']
-            ledger.append(row)
-        return {'items':items,'stock':stocks,'documents':docs,'contracts':list(contracts.values()),'ledger':ledger,'reconciliation':reconciliation(c,items),'batches':[dict(r) for r in c.execute('SELECT * FROM batches ORDER BY updated DESC')],'changes':[dict(r) for r in c.execute('SELECT code,delta,reason,operator,created FROM changes ORDER BY id DESC')],'events':[dict(r) for r in c.execute('SELECT * FROM events ORDER BY id DESC LIMIT 100')],'segments':[{'code':code,'zh':zh,'en':en} for code,zh,en in SEGMENTS]}
+        # Item totals and contract roll-ups come from shared helpers: the
+        # overview page, the CSV export and the paged item table must not drift
+        # apart on numbers.
+        items=build_items(c)
+        # Only the newest slice of each unbounded list travels with the page;
+        # older movements come from /api/ledger and older items from /api/items.
+        page=ledger_page(c,limit=LEDGER_PAGE_SIZE)
+        item_page=slice_items(items,ITEMS_PAGE_SIZE)
+        pending=c.execute("SELECT COUNT(*) FROM recognitions WHERE status IN ('READY','BLOCKED') AND document_id IS NULL").fetchone()[0]
+        return {'recognition_pending':pending,'items':item_page['rows'],'items_total':item_page['total'],'items_limit':item_page['limit'],'items_has_more':item_page['has_more'],'item_counts':item_counts(items),'stock':stocks,'documents':docs,'contracts':build_contracts(items),'ledger':page['rows'],'ledger_total':page['total'],'ledger_limit':page['limit'],'ledger_has_more':page['has_more'],'reconciliation':reconciliation(c,items),'batches':[dict(r) for r in c.execute('SELECT * FROM batches ORDER BY updated DESC')],'changes':[dict(r) for r in c.execute('SELECT code,delta,reason,operator,created FROM changes ORDER BY id DESC')],'events':[dict(r) for r in c.execute('SELECT * FROM events ORDER BY id DESC LIMIT 100')],'segments':[{'code':code,'zh':zh,'en':en} for code,zh,en in SEGMENTS]}
+
+def stock_detail(stock_id, limit=100, offset=0):
+    if isinstance(stock_id,bool): raise ValueError('库存位置无效')
+    try: stock_id=int(stock_id)
+    except (TypeError,ValueError): raise ValueError('库存位置无效')
+    if stock_id<=0: raise ValueError('库存位置无效')
+    with connect() as c:
+        row=c.execute('SELECT s.*,i.name,i.spec,i.unit,i.package,i.attribute FROM stock s JOIN items i ON i.code=s.code WHERE s.id=?',(stock_id,)).fetchone()
+        if not row: raise ValueError('库存位置不存在')
+        stock=dict(row); stock['qty']=number(stock['qty'])
+        try: stock['contents']=json.loads(stock.get('contents') or '[]')
+        except (TypeError,ValueError): stock['contents']=[]
+        stock_balance_fields(c,[stock])
+        return {'stock':stock,'history':ledger_page(c,limit,offset,stock_id=stock_id)}
 
 def doc_detail(doc):
     with connect() as c:
@@ -768,7 +1267,9 @@ def doc_detail(doc):
         for r in d['lines']:
             try: r['contents']=json.loads(r.get('contents') or '[]')
             except (TypeError,ValueError): r['contents']=[]
-        for r in d['lines']: r['qty']=number(r['qty'])
+        for r in d['lines']:
+            r['qty']=number(r['qty'])
+            r['remark']=r.get('attribute','') if d['kind'] in ('OUT','HANDOVER','MOVE','STATE') else ''
         return d
 
 def change_design(p):
@@ -793,27 +1294,114 @@ def batch_update(p):
         c.execute('INSERT INTO events(batch,old_status,new_status,operator,note,created) VALUES(?,?,?,?,?,?)',(code,old['status'] if old else None,status,required(p.get('operator'),'经办人 / Operator'),clean(p.get('note')),now()))
     return {'ok':True}
 
+def source_download(relative, original_name='source'):
+    path=(DATA/relative).resolve()
+    try: path.relative_to((DATA/'sources').resolve())
+    except ValueError: raise ValueError('原件路径无效 / Invalid source path') from None
+    if not path.is_file() or path.stat().st_size>17*1024*1024:
+        raise ValueError('原件不存在或超过处理上限 / Source missing or too large')
+    raw=path.read_bytes()
+    def filename(value):
+        return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', str(value)).strip(' .')[:180] or 'source'
+    def mime(name):
+        return {'.xls':'application/vnd.ms-excel','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                '.csv':'text/csv; charset=utf-8'}.get(Path(name).suffix.lower(),'application/octet-stream')
+    if path.suffix.lower()!='.json':
+        name=filename(original_name)
+        if Path(name).suffix.lower()!=path.suffix.lower(): name+=path.suffix
+        return raw,mime(name),name
+    saved=json.loads(raw)
+    if not isinstance(saved,dict) or saved.get('format')!='warehouse-intake-v1' or not isinstance(saved.get('sources'),list) or not 1<=len(saved['sources'])<=4:
+        raise ValueError('来源记录格式无效 / Invalid source archive')
+    files=[]
+    import intake
+    for source in saved['sources']:
+        if source.get('source')=='upload':
+            try: content=base64.b64decode(source.get('content',''),validate=True)
+            except (ValueError,TypeError): raise ValueError('原文件编码无效 / Invalid source encoding') from None
+            if not content or len(content)>12*1024*1024: raise ValueError('原文件大小无效 / Invalid source size')
+            name=filename(source.get('filename') or 'source.bin')
+        else:
+            wb=openpyxl.Workbook(); wb.remove(wb.active)
+            for title,sheet in intake.read_input(source,sys.modules[__name__]).items():
+                ws=wb.create_sheet(title); ws.freeze_panes='A2'
+                for row in sheet['rows']:
+                    ws.append(row)
+                    for cell in ws[ws.max_row]:
+                        if isinstance(cell.value,str): cell.data_type='s'
+                for column in ws.columns:
+                    ws.column_dimensions[column[0].column_letter].width=min(45,max(14,max(len(str(c.value or '')) for c in column)*2))
+            output=io.BytesIO(); wb.save(output); wb.close(); content=output.getvalue()
+            name=('到货单' if source.get('role')=='arrival_note' else '装箱单')+'.xlsx'
+        if (name,content) not in files: files.append((name,content))
+    if len(files)==1:
+        name,content=files[0]; return content,mime(name),name
+    output=io.BytesIO(); used=set()
+    with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as archive:
+        for name,content in files:
+            original=name; suffix=2
+            while name.casefold() in used:
+                name=f'{suffix}-{original}'; suffix+=1
+            used.add(name.casefold()); archive.writestr(name,content)
+    return output.getvalue(),'application/zip','入库原件.zip'
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self,*args): pass
-    def send(self,content,status=200,ctype='application/json; charset=utf-8',filename=None):
+    def send(self,content,status=200,ctype='application/json; charset=utf-8',filename=None,content_encoding=None,csp=None):
         if not isinstance(content,bytes): content=json.dumps(content,ensure_ascii=False).encode()
         self.send_response(status); self.send_header('Content-Type',ctype); self.send_header('Cache-Control','no-store'); self.send_header('X-Content-Type-Options','nosniff')
-        self.send_header('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
-        if filename: self.send_header('Content-Disposition','attachment; filename="'+filename+'"')
+        if content_encoding:
+            self.send_header('Content-Encoding',content_encoding); self.send_header('Vary','Accept-Encoding')
+        self.send_header('Content-Security-Policy',csp or "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
+        if filename: self.send_header('Content-Disposition',f'attachment; filename="download{Path(filename).suffix}"; filename*=UTF-8\'\'{quote(filename,safe="")}')
         self.send_header('Content-Length',str(len(content))); self.end_headers(); self.wfile.write(content)
     def do_GET(self):
         path=urlparse(self.path).path; query=parse_qs(urlparse(self.path).query)
         if self.headers.get('Host','').split(':')[0] not in ('127.0.0.1','localhost'): return self.send({'error':'Local access only'},403)
         try:
+            if path=='/':
+                self.send_response(302); self.send_header('Location','/showcase/?warehouse=1'); self.end_headers(); return
+            if path=='/showcase':
+                self.send_response(302); self.send_header('Location','/showcase/?warehouse=1'); self.end_headers(); return
+            if path=='/api/project-arrivals':
+                with connect() as c: return self.send(project_arrivals(c))
             if path=='/api/state':
-                state=dict(overview(),token=TOKEN,version=APP_VERSION)
+                state=dict(overview(),token=TOKEN,version=APP_VERSION,demo_mode=demo_mode())
                 state['admin_password_configured']=admin_password_configured()
+                state['local_ai_ready']=local_ai.available()
                 return self.send(state)
+            if path=='/api/ledger':
+                kind=clean(query.get('kind',[''])[0]).upper()
+                text=clean(query.get('q',[''])[0])[:100]
+                try: limit=int(query.get('limit',[LEDGER_PAGE_SIZE])[0])
+                except (TypeError,ValueError): limit=LEDGER_PAGE_SIZE
+                try: offset=int(query.get('offset',['0'])[0])
+                except (TypeError,ValueError): offset=0
+                with connect() as c: return self.send(ledger_page(c,limit,offset,kind,text))
+            if path=='/api/items':
+                text=clean(query.get('q',[''])[0])[:100]
+                package=clean(query.get('package',[''])[0])[:200]
+                try: limit=int(query.get('limit',[ITEMS_PAGE_SIZE])[0])
+                except (TypeError,ValueError): limit=ITEMS_PAGE_SIZE
+                try: offset=int(query.get('offset',['0'])[0])
+                except (TypeError,ValueError): offset=0
+                with connect() as c: return self.send(items_page(c,limit,offset,text,package))
+            if path=='/api/recognitions': return self.send(recognition_list(query))
+            if path=='/api/recognition': return self.send(recognition_detail(query['id'][0]))
+            if path=='/api/recognition/reopen': return self.send(recognition_reopen(query['id'][0]))
+            if path=='/api/stock-detail': return self.send(stock_detail(query.get('id',[''])[0],offset=query.get('offset',['0'])[0]))
             if path=='/api/document': return self.send(doc_detail(query['id'][0]))
+            if path=='/api/recognition-source':
+                record=recognition_detail(query['id'][0]); rel=record.get('source_path')
+                if not rel: raise ValueError('没有原始文件 / Source file not found')
+                content,mime,name=source_download(rel,record['original_name'])
+                return self.send(content,ctype=mime,filename=name)
             if path=='/api/source':
                 d=doc_detail(query['id'][0]); rel=d.get('source_path')
                 if not rel: raise ValueError('没有来源文件 / No source file')
-                return self.send((DATA/rel).read_bytes(),ctype='application/octet-stream',filename='source'+Path(rel).suffix)
+                content,mime,name=source_download(rel)
+                return self.send(content,ctype=mime,filename=name)
             if path=='/api/backup':
                 mem=io.BytesIO()
                 with connect() as c:
@@ -834,13 +1422,36 @@ class Handler(BaseHTTPRequestHandler):
             if path=='/api/template':
                 return self.send('\ufeff物资编码,物资名称,规格型号,单位,数量,批次,箱号,仓库,库位,库存状态,标段\r\nDEMO-001,模拟支架配件,M12,件,100,B01,C01,主仓库,A区-01,可用,A1\r\n'.encode(),ctype='text/csv; charset=utf-8',filename='sample.csv')
             if path=='/api/supplier-template':
-                f=ROOT.parent/'厂家发货与装箱清单固定模板.xlsx'
-                if not f.exists(): raise FileNotFoundError('固定模板尚未生成 / Fixed template not found')
+                f=ROOT/'static'/'到货单与装箱单模板.xlsx'
+                if not f.exists(): raise FileNotFoundError('模板尚未生成 / Template not found')
                 return self.send(f.read_bytes(),ctype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',filename='supplier-material-template.xlsx')
-            names={'/':'index.html','/app.js':'app.js','/style.css':'style.css'}
+            if path=='/api/inbound-demo-data' and demo_mode():
+                return self.send((ROOT/'static'/'演示数据-虚构勿入账.xlsx').read_bytes(),ctype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',filename='DEMO-ONLY.xlsx')
+            if path in ('/warehouse','/warehouse/'):
+                asset=(ROOT/'static'/'index.html').read_bytes()
+                return self.send(asset,ctype='text/html; charset=utf-8')
+            if path.startswith('/showcase/'):
+                showcase=(ROOT/'static'/'showcase').resolve()
+                relative=unquote(path[len('/showcase/'):])
+                asset_path=(showcase/relative).resolve()
+                if asset_path!=showcase and showcase not in asset_path.parents:
+                    return self.send({'error':'Not found'},404)
+                if asset_path.is_dir(): asset_path=asset_path/'index.html'
+                if not asset_path.is_file(): return self.send({'error':'Not found'},404)
+                asset=asset_path.read_bytes()
+                mime=mimetypes.guess_type(asset_path.name)[0] or 'application/octet-stream'
+                if mime.startswith(('text/','application/javascript')): mime += '; charset=utf-8'
+                csp="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'" if asset_path==showcase/'index.html' else None
+                if asset_path.suffix in ('.js','.css') and 'gzip' in self.headers.get('Accept-Encoding','').lower():
+                    return self.send(gzip.compress(asset,compresslevel=6,mtime=0),ctype=mime,content_encoding='gzip')
+                return self.send(asset,ctype=mime,csp=csp)
+            names={'/app.js':'app.js','/style.css':'style.css','/tokens.css':'tokens.css','/univer-preview.js':'univer-preview.js','/univer-preview.css':'univer-preview.css','/univer-LICENSES.txt':'univer-LICENSES.txt','/Apache-2.0.txt':'Apache-2.0.txt'}
             if path in names:
-                mime={'/':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8'}[path]
-                return self.send((ROOT/'static'/names[path]).read_bytes(),ctype=mime)
+                mime={'/':'text/html; charset=utf-8','/app.js':'text/javascript; charset=utf-8','/style.css':'text/css; charset=utf-8','/tokens.css':'text/css; charset=utf-8','/univer-preview.js':'text/javascript; charset=utf-8','/univer-preview.css':'text/css; charset=utf-8','/univer-LICENSES.txt':'text/plain; charset=utf-8','/Apache-2.0.txt':'text/plain; charset=utf-8'}[path]
+                asset=(ROOT/'static'/names[path]).read_bytes()
+                if path.endswith(('.js','.css')) and 'gzip' in self.headers.get('Accept-Encoding','').lower():
+                    return self.send(gzip.compress(asset,compresslevel=6,mtime=0),ctype=mime,content_encoding='gzip')
+                return self.send(asset,ctype=mime)
             self.send({'error':'Not found'},404)
         except (ValueError,KeyError,FileNotFoundError) as e: self.send({'error':str(e)},400)
     def do_POST(self):
@@ -851,7 +1462,7 @@ class Handler(BaseHTTPRequestHandler):
             length=int(self.headers.get('Content-Length','0'))
             if not 0<length<18*1024*1024: raise ValueError('请求过大 / Request too large')
             p=json.loads(self.rfile.read(length))
-            handlers={'/api/preview':lambda p:parse_file(p)[0],'/api/import':import_post,'/api/post':stock_post,'/api/reverse':reverse,'/api/delete':admin_delete,'/api/delete-batch':admin_delete_batch,'/api/admin-password':admin_password_set,'/api/change':change_design,'/api/batch':batch_update}
+            handlers={'/api/preview':preview_post,'/api/intake-ai':intake_ai_post,'/api/import':import_post,'/api/recognition/cancel':cancel_recognition,'/api/recognition/delete':delete_recognition,'/api/recognition/delete-batch':delete_recognitions,'/api/post':stock_post,'/api/reverse':reverse,'/api/delete':admin_delete,'/api/delete-batch':admin_delete_batch,'/api/admin-password':admin_password_set,'/api/change':change_design,'/api/batch':batch_update}
             fn=handlers.get(urlparse(self.path).path)
             if not fn: return self.send({'error':'Not found'},404)
             self.send(fn(p))

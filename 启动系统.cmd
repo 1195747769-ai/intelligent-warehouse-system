@@ -1,17 +1,39 @@
 @echo off
-setlocal
+rem ============================================================
+rem  Compatibility entry: start the app directly, no menu.
+rem  For stop / restart / status / log / backup, use the
+rem  control-menu launcher instead.
+rem  The original script was backed up as the .bak file.
+rem  ASCII only on purpose (see _find-python.cmd).
+rem ============================================================
+chcp 65001 >nul
+setlocal DisableDelayedExpansion
 cd /d "%~dp0"
-where py >nul 2>&1
-if %errorlevel%==0 (
-  py -3 server.py
-  goto :done
+
+if exist "%~dp0runtime\pythonw.exe" (
+  start "" "%~dp0runtime\pythonw.exe" "%~dp0desktop_launcher.py" %*
+  exit /b 0
 )
-where python >nul 2>&1
-if %errorlevel%==0 (
-  python server.py
-  goto :done
+call "%~dp0_find-python.cmd"
+
+if not defined PYCMD (
+  echo.
+  echo   [ERROR] The bundled runtime is missing or damaged.
+  echo   Run the offline setup package again to repair it.
+  echo.
+  pause
+  endlocal & exit /b 1
 )
-echo 未找到 Python 3，请先安装 Python 3.11 或更高版本。
-echo Python 3.11+ is required. Install it and run this file again.
-:done
-pause
+
+%PYCMD% "%~dp0desktop_launcher.py" %*
+set "RC=%errorlevel%"
+
+if not "%RC%"=="0" (
+  echo.
+  echo   Start failed with code %RC%.
+  echo   Run the control-menu launcher and choose [8] for a self-check.
+  echo.
+  pause
+)
+
+endlocal & exit /b %RC%

@@ -1,0 +1,55 @@
+:root {
+  --color-paper: oklch(98% 0.006 80);
+  --color-paper-2: oklch(99.5% 0.003 80);
+  --color-ink: oklch(27% 0.012 60);
+  --color-ink-2: oklch(45% 0.014 60);
+  --color-rule: oklch(86% 0.012 80);
+  --color-accent: oklch(51% 0.12 43);
+  --color-accent-ink: var(--color-paper-2);
+  --color-accent-wash: oklch(94% 0.025 55);
+  --color-sidebar: oklch(95.5% 0.01 80);
+  --color-sidebar-ink: var(--color-ink-2);
+  --color-focus: var(--color-accent);
+  --color-focus-on-dark: var(--color-focus);
+  --color-row-hover: oklch(97% 0.009 80);
+  --color-excluded: oklch(93% 0.006 80);
+  --color-backdrop: oklch(27% 0.012 60 / 0.32);
+  --color-green: oklch(43% 0.11 156);
+  --color-green-wash: oklch(95% 0.035 156);
+  --color-amber: oklch(48% 0.11 75);
+  --color-amber-wash: oklch(96% 0.04 85);
+  --color-red: oklch(45% 0.13 23);
+  --color-red-wash: oklch(96% 0.03 22);
+
+  --font-display: "Segoe UI", "Microsoft YaHei", sans-serif;
+  --font-body: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+  --font-mono: Consolas, "Cascadia Mono", monospace;
+
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-display: 1.625rem;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.76, 0, 0.24, 1);
+  --dur-short: 140ms;
+  --dur-reduced: 100ms;
+
+  --rule-hairline: 1px solid var(--color-rule);
+  --radius-control: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-pill: 999px;
+  --shadow-dialog: 0 12px 36px oklch(27% 0.012 60 / 0.12);
+}

@@ -11,3 +11,27 @@ venv/
 # Internal verification and working notes are not part of the public release.
 试用验收记录.md
 项目核对报告-*.md
+
+# Local runtime, drafts, models and generated distribution files
+.run/
+backups/
+demo-data/
+local-ai/
+.local-ai-*/
+runtime/
+node_modules/
+dist/
+release_checks/
+ui-data/
+preview-*/
+work/
+.hallmark/
+.superpowers/
+*.bak
+*.inspect.ndjson
+round1-*
+*.gguf
+*.zip.part*
+*-Windows-x64-Setup.exe
+*-Windows-x64-Portable.zip
+*-payload.zip

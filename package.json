@@ -1,0 +1,15 @@
+{
+  "name": "materials-app-static-build",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:univer": "vite build"
+  },
+  "dependencies": {
+    "@univerjs/preset-sheets-core": "1.0.2",
+    "@univerjs/presets": "1.0.2"
+  },
+  "devDependencies": {
+    "vite": "8.3.1"
+  }
+}

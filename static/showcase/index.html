@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf9f6">
+  <meta name="description" content="南非巴法拉内一期光储项目介绍：110 MWac光伏、100 MW / 431 MWh储能，场区概念效果图、工程图纸与原理演示。">
+  <title>巴法拉内一期光储项目 · 项目介绍</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23a65235'/%3E%3Cpath d='M10 44 31 12l23 32H10Z' fill='none' stroke='%23faf9f6' stroke-width='4'/%3E%3Cpath d='M20 44 31 27l13 17M31 12v32' fill='none' stroke='%23faf9f6' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./assets/css/showcase.css?rev=66">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three.module.js",
+        "three/addons/": "./vendor/three-addons/"
+      }
+    }
+  </script>
+</head>
+<body data-active-view="project">
+  <header class="topbar">
+    <a class="brand" href="#project" aria-label="返回项目介绍首页">
+      <span class="brand-mark" aria-hidden="true">BA</span>
+      <span class="brand-copy"><strong>巴法拉内光储项目</strong><small>南非西北省 · SOLAR + BATTERY STORAGE</small></span>
+    </a>
+    <div class="project-heading"><span>南非西北省</span><strong>巴法拉内光储项目</strong></div>
+    <nav class="primary-nav" aria-label="项目视图">
+      <button class="nav-button is-active" type="button" data-view-target="project" aria-current="page">项目介绍</button>
+      <button class="nav-button" type="button" data-view-target="pv">光伏原理</button>
+      <button class="nav-button" type="button" data-view-target="overview">储能配套</button>
+      <button class="nav-button" type="button" data-view-target="transmission">输电线路</button>
+    </nav>
+    <div class="topbar-tools" hidden>
+      <a class="warehouse-link" href="/warehouse">仓储业务</a>
+      <button class="arrival-refresh" type="button" data-arrival-refresh>手动刷新到货</button>
+      <span class="arrival-refresh-status" data-arrival-refresh-status aria-live="polite">尚未刷新</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="project" class="view is-active" aria-labelledby="project-title">
+      <div class="project-hero">
+        <div class="project-hero-copy">
+          <div class="project-heading-label"><div class="project-kicker">一期 · 南非西北省</div><p class="project-name-en">BAPHALANE PHASE I · SOLAR + BATTERY STORAGE</p></div>
+          <h1 id="project-title">巴法拉内<span>光储项目</span></h1>
+          <div class="project-hero-intro">
+          <p class="project-lead">光伏与储能相结合的新能源工程，包含农光互补区域、升压站与电网接入设施。由场区全貌出发，了解发电、储能与送出的完整关系。</p>
+          <div class="project-hero-actions">
+            <a class="project-primary-link" href="#pv">查看发电原理 <span aria-hidden="true">↗</span></a>
+            <a class="project-text-link" href="./assets/Baphalane_Phase_I_Project_Introduction_EN.pdf" target="_blank" rel="noopener">英文项目介绍 <span aria-hidden="true">↗</span></a>
+          </div>
+          <p class="project-hero-note">Moses Kotane · 南非西北省 · 参数按当前工作基线表达</p>
+          </div>
+        </div>
+        <figure class="project-concept">
+          <img src="./assets/project-concept.png" width="1672" height="941" alt="项目介绍书中的场区概念效果图：光伏阵列沿地形展开，左下方为储能及站区设施；不是现场照片。" fetchpriority="high">
+          <figcaption><span>场区概念效果图 · 英文项目介绍第 2 页</span><span>规划示意 · 非现场照片</span></figcaption>
+        </figure>
+        <details class="site-plan-reference project-plan-reference">
+          <summary>展开工程总平面 · 对照场区布置</summary>
+          <figure class="project-map">
+          <div class="project-map-heading"><span>场区全貌</span><small>总平面图 · 图纸表达</small></div>
+          <div class="project-map-stage">
+            <img class="project-map-underlay" src="./assets/site-plan-underlay.png" width="4135" height="2342" alt="总平面图中的光伏场区及左下方储能和配套设施，图纸表达不代表竣工状态。" loading="lazy">
+            <img class="project-map-vectors" src="./assets/project-plan.svg?rev=2" width="1879" height="1064" alt="" aria-hidden="true" loading="lazy">
+          </div>
+          <figcaption><span>光伏场区 · 储能及运维配套</span><a href="./assets/site-plan-underlay.png" target="_blank" rel="noopener">查看总平面原图 ↗</a></figcaption>
+          </figure>
+        </details>
+        <nav class="project-explore" aria-label="探索项目系统">
+          <a href="#pv"><span>光伏发电</span><small>跟踪阵列与能量转换</small><b aria-hidden="true">↗</b></a>
+          <a href="#overview"><span>储能与配套</span><small>设备布置、道路与运维</small><b aria-hidden="true">↗</b></a>
+          <a href="#transmission"><span>电网接入</span><small>升压站与两段独立馈线</small><b aria-hidden="true">↗</b></a>
+        </nav>
+      </div>
+      <div class="project-scale-heading"><h2>项目规模</h2><p>工作基线与图纸参数 · 最终以批准文件为准</p></div>
+      <dl class="project-metrics" aria-label="项目规模工作基线">
+        <div><dt>光伏交流侧 · 工作基线</dt><dd>110 <span>MWac</span></dd></div>
+        <div><dt>光伏直流侧 · 约值</dt><dd>142.7 <span>MWp</span></dd></div>
+        <div><dt>储能功率 · 图纸表达</dt><dd>100 <span>MW</span></dd></div>
+        <div><dt>储能容量 · 图纸表达</dt><dd>431 <span>MWh</span></dd></div>
+      </dl>
+      <section class="project-systems" aria-labelledby="project-systems-title">
+        <div class="project-section-heading">
+          <div><div class="project-kicker">工程构成</div><h2 id="project-systems-title">从场区，看懂项目</h2></div>
+          <p class="project-section-lead">沿着真实图纸展开三个系统。先看工程布置，再进入三维原理与空间讲解。</p>
+        </div>
+        <div class="project-system-gallery">
+          <article class="project-chapter project-chapter--pv" aria-labelledby="project-pv-heading">
+            <div class="project-chapter-copy">
+              <span class="project-kicker">01 · 光伏发电</span>
+              <h3 id="project-pv-heading">把光照，转化为电能</h3>
+              <p>13 个光伏分区沿场地展开。单轴跟踪阵列、组串逆变器与箱变构成发电单元，交流电经 33 kV 集电系统汇集。</p>
+              <a class="project-chapter-link" href="#pv">查看发电原理 <span aria-hidden="true">↗</span></a>
+            </div>
+            <figure class="project-chapter-figure">
+              <div class="project-chapter-image"><img src="./assets/pv-plan-preview.svg" width="1715" height="978" loading="lazy" alt="按附图1原始坐标复绘的13个光伏分区与组件排，不代表建设状态。"></div>
+              <figcaption>附图1 · 原始组件排矢量复绘</figcaption>
+            </figure>
+          </article>
+          <article class="project-chapter project-chapter--bess" aria-labelledby="project-bess-heading">
+            <figure class="project-chapter-figure">
+              <div class="project-chapter-image"><img src="./assets/campus-plan-preview.svg" width="196" height="313" loading="lazy" alt="储能三条斜向设备排、上侧开关站和运维区；虚线复绘原图粉色围栏局部，不补画闭合边。"></div>
+              <figcaption>附图1 / 3-2 · 场坪与设备点位复绘</figcaption>
+            </figure>
+            <div class="project-chapter-copy">
+              <span class="project-kicker">02 · 储能与运维</span>
+              <h3 id="project-bess-heading">储能场区，各就其位</h3>
+              <p>储能设备沿三条斜向长排布置，开关站、运维区及道路按原图关系衔接。虚线对应原图粉色 FENCE 围栏；设备点位为示意，不代表基础尺寸或采购数量。</p>
+              <a class="project-chapter-link" href="#overview">进入储能配套 <span aria-hidden="true">↗</span></a>
+            </div>
+          </article>
+          <article class="project-chapter project-chapter--grid" aria-labelledby="project-grid-heading">
+            <figure class="project-chapter-figure">
+              <div class="project-chapter-image">
+                <svg class="project-grid-diagram" viewBox="0 0 520 430" role="img" aria-labelledby="grid-preview-title grid-preview-desc">
+                  <title id="grid-preview-title">两条独立馈线与 Manama 双母线</title>
+                  <desc id="grid-preview-desc">Baphalane IPP 与 Spitskop MTS 分别通过独立132千伏馈线接入 Manama 双母线站。图为拓扑概念，不指定母线分配、开关位置或地理距离。</desc>
+                  <g class="grid-preview-lines" aria-hidden="true"><path d="M180 112H245V228M340 112H275V228"/></g>
+                  <g class="grid-preview-stations" aria-hidden="true"><rect x="16" y="58" width="210" height="102"/><rect x="294" y="58" width="210" height="102"/><rect class="grid-preview-collector" x="105" y="228" width="310" height="130"/><path class="grid-preview-bus" d="M168 275H352M168 297H352"/></g>
+                  <g class="grid-preview-labels"><text x="121" y="100">Baphalane IPP</text><text class="grid-preview-small" x="121" y="130">项目升压站</text><text x="399" y="100">Spitskop MTS</text><text class="grid-preview-small" x="399" y="130">电网接入站</text><text x="260" y="260">Manama 汇集站</text><text class="grid-preview-small" x="260" y="332">132 kV 双母线</text><text class="grid-preview-small" x="123" y="202">独立馈线 01</text><text class="grid-preview-small" x="397" y="202">独立馈线 02</text></g>
+                </svg>
+              </div>
+              <figcaption>单线图关系概括 · 非地理线路图</figcaption>
+            </figure>
+            <div class="project-chapter-copy">
+              <span class="project-kicker">03 · 送出与接入</span>
+              <h3 id="project-grid-heading">两段馈线，接入电网</h3>
+              <p>IPP — Manama 与 Manama — Spitskop 为两段独立 132 kV 馈线，通过 Manama 双母线系统连接。母线分配与开关配置以批准单线图为准。</p>
+              <a class="project-chapter-link" href="#transmission">查看输电与接入 <span aria-hidden="true">↗</span></a>
+            </div>
+          </article>
+        </div>
+      </section>
+      <aside class="project-connection" aria-labelledby="project-connection-title">
+        <div><div class="project-kicker">系统关系 · 原理表达</div><h2 id="project-connection-title">从光照到并网</h2><p class="project-section-lead">理解能量如何转换，以及各工程的接口关系。</p></div>
+        <div>
+          <ol class="project-energy-flow">
+            <li><span aria-hidden="true">01</span><div><strong>光伏组件</strong><small>光能转换为直流电</small></div></li>
+            <li><span aria-hidden="true">02</span><div><strong>逆变与箱变</strong><small>直流转交流，升压至 33 kV</small></div></li>
+            <li><span aria-hidden="true">03</span><div><strong>IPP 升压站</strong><small>33 kV / 132 kV 升压接口</small></div></li>
+            <li><span aria-hidden="true">04</span><div><strong>电网接入</strong><small>Manama 汇集 · Spitskop MTS 接入</small></div></li>
+          </ol>
+          <div class="project-feeders"><h3>两段独立 132 kV 馈线 · 里程待确认</h3><p><span>IPP — Manama · 现有展示口径</span><b>17 <small>km</small></b></p><p><span>Manama — Spitskop · 现有展示口径</span><b>8 <small>km</small></b></p><small>现有线路展示约 25 km；英文介绍书规划口径为 17＋19 km，约 36 km。路线与长度待业主/Eskom书面统一确认。Manama 两条馈线经双母线连接。</small></div>
+        </div>
+      </aside>
+      <section class="project-warehouse" aria-labelledby="project-warehouse-title">
+        <div><h2 id="project-warehouse-title">从工程展示，到现场收发</h2><p>查看库存、办理出入库、追溯原始单据。设备到货汇总可在各展示页手动刷新。</p></div>
+        <a href="/warehouse">进入仓储业务 <span aria-hidden="true">↗</span></a>
+      </section>
+      <details class="project-source-notes source-notes">
+        <summary>项目资料依据与展示口径</summary>
+        <p>首页概念效果图：2026年10月2日英文项目介绍第2页，沿用原介绍材料中的概念图，不代表现场实景或最终布置。<a href="./assets/Baphalane_Phase_I_Project_Introduction_EN.pdf" target="_blank" rel="noopener">查看完整英文项目介绍（5页 PDF）</a>。</p>
+        <p>工程总图：现有附图1总平面图及提取的光伏分区矢量；光伏原理：附图5-2/5-3/5-4/5-7及A-2.5；储能和运维：附图3-2及附图4系列；接入关系：Overall SLD Rev C、Manama SLD Rev C与项目集群KMZ。</p>
+        <p>110 MWac、约142.7 MWp、100 MW、431 MWh按当前工作基线或图纸表达，最终配置以批准文件为准。组串长度、逆变器分组与部分设备配置待统一；现有线路展示约17 km＋8 km，与英文介绍书沿用的规划口径17 km＋19 km存在差异，待业主/Eskom书面确认。介绍书列示的合同工期尚未据原合同复核，不转换为开工或完工日历日期。</p>
+        <p>原理演示中的设备外形、距离和部分布置为示意，不代表竣工或实时运行状态。储能充放电的具体接线接口以批准单线图为准。</p>
+      </details>
+      <footer class="project-footer"><strong>巴法拉内光储项目</strong><span>项目介绍 · 场区与系统展示</span><a href="/warehouse">进入仓储业务 <span aria-hidden="true">↗</span></a></footer>
+    </section>
+    <section id="overview" class="view" aria-labelledby="overview-title" hidden>
+      <nav class="view-breadcrumb" aria-label="当前位置"><a href="#project">项目介绍</a><span aria-hidden="true">/</span><span aria-current="page">储能配套</span></nav>
+      <div class="overview-toolbar">
+        <div class="overview-heading">
+          <div class="eyebrow"><span class="live-dot"></span> 储能场区 · 空间展示</div>
+          <h2 id="overview-title">储能与配套设施</h2>
+          <p>按总平面关系展示储能、开关站、运维区与场内道路；拖动旋转，滚轮缩放。</p>
+        </div>
+        <div class="overview-controls">
+          <div class="site-camera-controls" role="group" aria-label="场区镜头">
+            <button type="button" data-focus-site="bess" aria-pressed="false">储能区</button>
+            <button type="button" data-focus-site="switchyard" aria-pressed="false">开关站</button>
+            <button type="button" data-focus-site="om" aria-pressed="false">运维区</button>
+            <button type="button" data-om-interior aria-pressed="false" title="按运维楼平面图查看室内">室内</button>
+            <button type="button" data-site-tour aria-pressed="false">自动巡览</button>
+          </div>
+          <button class="icon-button" type="button" data-reset-scene="site" title="回到总览" aria-label="复位储能设备区模型视角">总览 <span aria-hidden="true">↻</span></button>
+        </div>
+      </div>
+      <div class="scene-workspace--site">
+        <div class="scene-frame scene-frame--site">
+          <div id="site-scene" class="scene-canvas" role="img" aria-label="巴法拉内项目BESS及配套设施局部三维模型"></div>
+          <span class="scene-caption">拖动旋转 · 滚轮缩放 · 点击设备查看说明</span>
+          <div class="scene-vignette" aria-hidden="true"></div>
+
+          <div class="loading-state" data-loading="site">正在构建场区模型…</div>
+          <div class="error-state" data-error="site" hidden>3D暂时无法显示，可在下方展开总平面图纸对照。</div>
+        </div>
+          <aside id="site-inspector" class="inspector" aria-live="polite" hidden>
+            <span class="inspector-kicker">FACILITY DETAILS</span>
+            <h3>储能与场内配套设施</h3>
+            <p>总平面粉色点线为场区围栏，黑色线为场坪轮廓；此处显示储能配套附近的围栏段，西侧入口按道路交点展示定位。点“室内”可按运维楼平面图查看房间剖视。等高线仅按平面显示，围界不作为安防施工设计。</p>
+            <div class="inspector-rule"></div>
+            <span class="inspector-hint">点击场景中的设备查看简介</span>
+          </aside>
+        <section class="arrival-board arrival-board--overlay" data-arrival-board="overview" data-arrival-keys="bess-cabinet,pcs,pv-inverter,pv-transformer,main-transformer" hidden>
+          <div class="arrival-summary">
+            <div class="arrival-board-heading"><div><span class="inspector-kicker">MAJOR EQUIPMENT ARRIVAL</span><h3>主要设备到货总览</h3><p>现场签收按已过账入库统计，备品排除；在途/清关仅作可追溯参考。</p></div></div>
+            <div class="arrival-cards" data-arrival-cards="overview"></div>
+          </div>
+          <div class="arrival-detail" data-arrival-detail="overview" aria-live="polite">点选设备卡或场景区域查看规格型号及到货口径。</div>
+        </section>
+      </div>
+      <details class="site-plan-reference">
+        <summary>查看总平面图纸对照</summary>
+        <div class="site-plan-reference-body">
+          <figure><img src="./assets/bess-plan-reference.png?rev=1" width="588" height="939" loading="lazy" alt="附图1储能配套局部：外围粉色点线为围栏，黑色线为场坪轮廓，黄色双线为道路"><figcaption>附图1 总平面布置图 · 原图局部裁切</figcaption></figure>
+          <div class="site-plan-reading"><span class="project-kicker">布局与图例</span><h3>从图纸看懂场区关系</h3><dl><div><dt>粉色带点线</dt><dd>场区外围围栏，继续延伸至光伏区。</dd></div><div><dt>黑色轮廓</dt><dd>储能场坪、运维区及建筑轮廓。</dd></div><div><dt>黄色双线</dt><dd>场内道路，从西侧接入，沿站区与储能区衔接。</dd></div></dl><p>储能设备沿三条斜向长排布置，开关站位于上侧，运维区再往上。右侧为光伏场区。</p><p class="site-plan-note">3D用于理解空间关系；设备外形和入口开门方式为展示示意。</p></div>
+        </div>
+      </details>
+      <div class="capacity-strip" aria-label="储能设备区图纸表达">
+        <div><b>100 <small>MW</small></b><span>储能功率</span></div>
+        <div><b>431 <small>MWh</small></b><span>储能容量</span></div>
+        <div><b>PCS <small>+ XFMR</small></b><span>储能变流及升压设备</span></div>
+      </div>
+      <div class="page-footnote">
+        <span>图纸依据：附图1总平面、附图2道路、附图3-2储能、附图4-1/4-2/4-3运维图</span>
+        <span>三条斜向设备长排 · 原图粉色FENCE围栏 · 西侧道路入口</span>
+        <span>展示模型 · 非竣工 / 非实时运行模型</span>
+      </div>
+      <nav class="view-continuation" aria-label="继续了解项目"><a href="#project">← 返回项目介绍</a><a class="view-next" href="#transmission"><small>下一步</small><strong>输电与电网接入 <span aria-hidden="true">→</span></strong></a></nav>
+    </section>
+
+    <section id="pv" class="view" aria-labelledby="pv-title" hidden>
+      <nav class="view-breadcrumb" aria-label="当前位置"><a href="#project">项目介绍</a><span aria-hidden="true">/</span><span aria-current="page">光伏原理</span></nav>
+      <div class="pv-page-heading">
+        <div>
+          <div class="eyebrow"><span class="live-dot"></span><span data-pv-eyebrow>PV ARRAY · PRINCIPLE DEMONSTRATION</span></div>
+          <h2 id="pv-title" data-pv-title>光伏发电原理演示</h2>
+          <p data-pv-description>从单轴跟踪支架上的代表性组件串，沿直流、逆变、33 kV 集电到 IPP 升压站逐步看懂发电链路。</p>
+        </div>
+        <div class="pv-mode-switch" role="group" aria-label="光伏区显示模式">
+          <button type="button" data-pv-mode="principle" aria-pressed="true" disabled>发电原理</button>
+          <button type="button" data-pv-mode="layout" aria-pressed="false" disabled>场区排布</button>
+        </div>
+      </div>
+      <div class="pv-exhibit">
+      <div class="scene-frame scene-frame--pv">
+        <div id="pv-scene" class="scene-canvas" role="img" aria-label="光伏单轴跟踪支架、代表性组串、逆变器、33千伏箱变和IPP升压站三维原理演示"></div>
+        <span class="pv-scene-caption">拖动旋转 · 滚轮缩放 · 点击设备讲解</span>
+        <div class="scene-vignette" aria-hidden="true"></div>
+        <div class="model-stamp" data-pv-model-stamp>代表性原理模型 · 距离压缩 · 非实时运行</div>
+        <div class="loading-state" data-loading="pv">正在构建光伏演示模型…</div>
+        <div class="error-state" data-error="pv" hidden>当前浏览器无法开启3D图形显示，请使用支持WebGL的新版浏览器。</div>
+      </div>
+        <aside id="pv-inspector" class="inspector" aria-live="polite">
+          <span class="inspector-kicker" data-pv-step-kicker>GENERATION PRINCIPLE</span>
+          <h3 data-pv-step-title>光照转化为直流电</h3>
+          <p data-pv-step-detail>光伏组件吸收太阳辐照后产生直流电；跟踪支架转动组件平面，使其随太阳方位变化调整朝向。</p>
+          <small class="pv-demo-disclaimer" data-pv-demo-disclaimer>代表性组件段 · 组串长度与逆变器分组以统一设计文件为准</small>
+        <div class="pv-demo-actions">
+          <button type="button" data-pv-prev disabled>上一步</button>
+          <button type="button" data-pv-play aria-pressed="false" disabled>自动讲解</button>
+          <button type="button" data-pv-next disabled>下一步</button>
+        </div>
+          <div class="pv-chapter-note">沿六步流程，了解从光照到并网的能量转换。</div>
+        </aside>
+        <div class="pv-demo-toolbar">
+        <div class="pv-step-controls" role="group" aria-label="发电原理步骤">
+          <button type="button" data-pv-step="0" aria-pressed="true" disabled>01 光伏发电</button>
+          <button type="button" data-pv-step="1" aria-pressed="false" disabled>02 组串直流</button>
+          <button type="button" data-pv-step="2" aria-pressed="false" disabled>03 逆变 MPPT</button>
+          <button type="button" data-pv-step="3" aria-pressed="false" disabled>04 交流汇集</button>
+          <button type="button" data-pv-step="4" aria-pressed="false" disabled>05 箱变升压</button>
+          <button type="button" data-pv-step="5" aria-pressed="false" disabled>06 并网升压</button>
+        </div>
+        </div>
+      </div>
+      <details class="pv-device-tools">
+        <summary>设备镜头与支架演示</summary>
+      <div class="pv-camera-controls" role="group" aria-label="光伏设备镜头">
+        <span>设备镜头</span>
+        <button type="button" data-pv-focus="tracker" aria-pressed="true" disabled>跟踪支架</button>
+        <button type="button" data-pv-focus="inverter" aria-pressed="false" disabled>逆变器</button>
+        <button type="button" data-pv-focus="block-transformer" aria-pressed="false" disabled>箱变</button>
+        <button type="button" data-pv-focus="ipp" aria-pressed="false" disabled>IPP 升压站</button>
+        <button class="icon-button" type="button" data-reset-scene="pv" title="复位当前光伏视角" aria-label="复位光伏区模型视角">复位视角 <span aria-hidden="true">↻</span></button>
+        <button type="button" data-pv-stow aria-pressed="false" disabled>大风收拢演示</button>
+      </div>
+      </details>
+      <div class="pv-information">
+        <div class="capacity-strip pv-capacity-strip" aria-label="光伏项目工作基线">
+          <div><b>110 <small>MWac</small></b><span>交流侧工作基线</span></div>
+          <div><b>142.7 <small>MWp</small></b><span>直流侧约值</span></div>
+          <div data-pv-baseline-modules><b>710 <small>Wp</small></b><span>组件选型工作基线</span></div>
+          <div data-pv-layout-zones hidden><b>13 <small>区</small></b><span>总平面光伏分区</span></div>
+        </div>
+      </div>
+      <section class="arrival-board" data-arrival-board="pv" data-arrival-keys="pv-inverter,pv-transformer" hidden>
+        <div class="arrival-board-heading"><div><span class="inspector-kicker">PV EQUIPMENT ARRIVAL</span><h3>逆变器与箱变到货</h3><p>按仓储物资档案规格分开显示，不跨型号、单位汇总。</p></div></div>
+        <div class="arrival-cards" data-arrival-cards="pv"></div>
+        <div class="arrival-detail" data-arrival-detail="pv" aria-live="polite">点选设备卡或模型设备查看规格型号及到货口径。</div>
+      </section>
+      <div class="pv-communication" data-pv-communication hidden aria-label="跟踪支架通信关系">
+        <strong>跟踪控制与监视</strong>
+        <span>气象站 <b>RS485</b>　·　逆变器 <b>Modbus</b>　·　PV/PLC 耦合信号</span>
+        <i aria-hidden="true">→</i>
+        <span>跟踪控制器 → 通信箱 → 光纤 / 以太网 → PV SCADA</span>
+      </div>
+      <div class="page-footnote pv-footnote">
+        <span data-pv-source>依据：附图5-2/5-3/5-4/5-7 与 A-2.5 跟踪支架技术要求</span>
+        <span data-pv-source-note>图纸的组串长度、逆变器分组及单元容量存在差异；展示只讲原理，不用未统一数值。</span>
+        <span>710 Wp 为当前工作基线；WIA书面评审、批准排布及最终供货清单待补。</span>
+      </div>
+    </section>
+
+    <section id="transmission" class="view" aria-labelledby="line-title" hidden>
+      <nav class="view-breadcrumb" aria-label="当前位置"><a href="#project">项目介绍</a><span aria-hidden="true">/</span><span aria-current="page">输电接入</span></nav>
+      <div class="line-header">
+        <div>
+          <div class="eyebrow"><span class="live-dot"></span> GRID CONNECTION · 132 kV</div>
+          <h2 id="line-title">送出线路与电网接入</h2>
+          <p>按项目集群 KMZ 折线展示线路走向；两段线路分别接入 Manama 的 Baphalane / Spitskop 132 kV 间隔及双母线，站端结构为示意。</p>
+        </div>
+        <div class="line-distances" aria-label="两段线路展示口径">
+          <div><span>IPP—Manama · 工作基线</span><strong>17 <small>km</small></strong></div>
+          <div><span>Manama—Spitskop · 工作基线</span><strong>8 <small>km</small></strong></div>
+          <div class="distance-total"><span>合计 · 待书面确认</span><strong>≈25 <small>km</small></strong></div>
+        </div>
+      </div>
+      <div class="transmission-layout">
+        <div class="line-scene-column">
+          <div class="line-scene-toolbar">
+          <div class="line-scene-label"><span>132 kV GRID CONNECTION</span><strong>两段独立馈线 · Manama 双母线</strong></div>
+          <div class="line-view-controls">
+            <div class="line-camera-controls" role="group" aria-label="线路镜头">
+              <button type="button" data-focus-line="route" aria-pressed="true">线路全景</button>
+              <button type="button" data-focus-line="baphalane" aria-pressed="false">巴法升压站</button>
+              <button type="button" data-focus-line="manama" aria-pressed="false">Manama</button>
+              <button type="button" data-focus-line="spitskop" aria-pressed="false">Spitskop</button>
+              <button type="button" data-line-tour aria-pressed="false">自动巡览</button>
+            </div>
+            <button class="icon-button" type="button" data-reset-scene="line" title="回到线路全景" aria-label="复位输电线路模型视角">总览 <span aria-hidden="true">↻</span></button>
+          </div>
+          </div>
+          <div class="scene-frame scene-frame--line">
+            <div id="line-scene" class="scene-canvas" role="img" aria-label="按项目集群KMZ路径示意连接巴法拉内、Manama与Spitskop三站的132kV输电线路三维模型"></div>
+            <span class="scene-caption">拖动旋转 · 点击站点查看送出关系</span>
+            <div class="scene-vignette" aria-hidden="true"></div>
+            <div class="loading-state" data-loading="line">正在构建线路模型…</div>
+            <div class="error-state" data-error="line" hidden>当前浏览器无法开启 3D 图形显示，请使用支持 WebGL 的新版浏览器。</div>
+          </div>
+          <div class="station-legend"><span><i class="legend-dot legend-dot--orange"></i>橙色虚线：线路走向参考</span><span>银灰导线接入站端间隔 · 站内位置与塔位为示意</span></div>
+        </div>
+        <aside class="route-panel" id="line-inspector" aria-live="polite">
+          <div class="route-map-heading"><div><span class="inspector-kicker">THREE-STATION CONNECTION</span><h3>三站 132 kV 送出链路</h3></div></div>
+          <div class="route-stops">
+            <button type="button" data-focus-line="baphalane"><i class="stop-pin stop-pin--gold"></i><span><strong>Baphalane IPP Substation</strong><small>项目升压站</small></span></button>
+            <button type="button" data-focus-line="manama"><i class="stop-pin stop-pin--blue"></i><span><strong>Manama Collector Station</strong><small>中间汇集站</small></span></button>
+            <button type="button" data-focus-line="spitskop"><i class="stop-pin stop-pin--orange"></i><span><strong>Spitskop MTS</strong><small>Eskom 接入站</small></span></button>
+          </div>
+          <p class="route-disclaimer">两条独立 132 kV 馈线分别接入 Manama 双母线；点击站点查看说明，里程为待确认工作基线。</p>
+          <details class="source-notes">
+            <summary>图纸依据与待确认事项</summary>
+          <p class="source-disclaimer">单线图关系显示：Baphalane Solar Farm FDR 与 Spitskop MTS FDR 为两条独立 132 kV 线路，分别接入 Manama 双母线；不以一根架空线穿站直通。站端间隔位置、母线选择、杆位及塔型均为识别性示意，不代表批准的物理布置。路径参考集群 KMZ；当前里程工作基线约 17 km + 8 km = 25 km，与既有 19 km + 17 km 表述冲突，待业主 / Eskom 书面确认。</p>
+          </details>
+          <section class="arrival-board arrival-board--compact" data-arrival-board="transmission" data-arrival-keys="main-transformer" hidden>
+            <div class="arrival-board-heading"><div><span class="inspector-kicker">BAPHALANE IPP EQUIPMENT</span><h3>升压站主变到货</h3></div></div>
+            <div class="arrival-cards" data-arrival-cards="transmission"></div>
+            <div class="arrival-detail" data-arrival-detail="transmission" aria-live="polite">点选巴法拉内站设备查看到货口径。</div>
+          </section>
+        </aside>
+      </div>
+      <div class="page-footnote">
+        <span>线路走向参考：P08114 Cluster KMZ（待 GIS/CAD 核对）；站间拓扑参考 Overall SLD Rev C 与 Manama SLD Rev C</span>
+        <span>里程工作基线：17 km + 8 km ≈ 25 km（待书面确认）</span>
+      </div>
+      <nav class="view-continuation" aria-label="继续了解项目"><a href="#project">← 返回项目介绍</a><a class="view-next" href="#overview"><small>下一步</small><strong>储能与配套设施 <span aria-hidden="true">→</span></strong></a></nav>
+      <nav class="view-continuation" aria-label="继续了解项目"><a href="#project">← 返回项目介绍</a><a class="view-next" href="/warehouse"><small>开始办理</small><strong>进入仓储业务 <span aria-hidden="true">↗</span></strong></a></nav>
+    </section>
+  </main>
+
+  <script type="module" src="./assets/js/app.js?rev=81"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+Official source: https://visualstudio.microsoft.com/wp-content/uploads/2021/09/Visual-C-Runtime-2015-2022-License-1.docx
+License page: https://visualstudio.microsoft.com/license-terms/vs2022-cruntime/
+Original SHA256: f1e3d56ceb2ad68aae0711b910375009e651ac5530fa0760f0dea6e81e54fae1
+Extracted TXT SHA256: 135674334c46beb3f2a6fba1a2c488aee9b9d521802e4d69b15d887040e662f6

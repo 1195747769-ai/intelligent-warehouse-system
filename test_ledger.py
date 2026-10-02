@@ -1,4 +1,4 @@
-import base64, concurrent.futures, importlib, io, os, tempfile, unittest, uuid
+import base64, concurrent.futures, importlib, io, os, tempfile, unittest, uuid, json
 import openpyxl
 import server as app
 
@@ -12,6 +12,58 @@ class LedgerTest(unittest.TestCase):
         return self.request(external_ref=ref,filename=ref+'.csv',content=base64.b64encode(content.encode()).decode(),kind=kind)
     def pos(self,state='AVAILABLE'):
         return next(s for s in app.overview()['stock'] if s['state']==state)
+
+    def test_issue_line_remark_saved_without_changing_item_or_quantity(self):
+        app.import_post(self.receipt('REMARK',qty='5'))
+        position=self.pos()
+        with app.connect() as c: c.execute("UPDATE items SET attribute='设备原备注' WHERE code=?",(position['code'],))
+        remark='用于 A 区\n配套附件另交；<请核对>'
+        result=app.stock_post(self.request(kind='OUT',lines=[{'stock_id':position['id'],'qty':'0.25','remark':remark}]))
+        doc=app.doc_detail(result['id'])
+        self.assertEqual(doc['lines'][0]['remark'],remark)
+        self.assertEqual(doc['lines'][0]['qty'],-0.25)
+        self.assertEqual(doc['purpose'],'Synthetic test')
+        self.assertEqual(self.pos()['qty'],4.75)
+        self.assertEqual(self.pos()['attribute'],'设备原备注')
+        self.assertEqual(app.doc_detail(result['id'])['lines'][0]['remark'],remark)
+        before=app.overview()
+        with self.assertRaisesRegex(ValueError,'备注'):
+            app.stock_post(self.request(kind='OUT',lines=[{'stock_id':position['id'],'qty':1,'remark':'a'*1001}]))
+        self.assertEqual(before['stock'],app.overview()['stock'])
+        self.assertEqual(before['documents'],app.overview()['documents'])
+
+    def test_stock_detail_traces_receipt_after_move_without_mutation(self):
+        incoming=app.import_post(self.receipt('TRACE',qty='8'))
+        app.stock_post(self.request(kind='MOVE',warehouse='WH2',bin='B3',lines=[{'stock_id':self.pos()['id'],'qty':3}]))
+        app.import_post(self.receipt('OTHER',code='M2'))
+        before=app.overview()['stock']
+        target=next(s for s in before if s['warehouse']=='WH2')
+        detail=app.stock_detail(target['id'],limit=1)
+        self.assertEqual(detail['stock']['qty'],3)
+        self.assertEqual(detail['history']['total'],3)
+        self.assertTrue(detail['history']['has_more'])
+        all_rows=app.stock_detail(target['id'])['history']['rows']
+        self.assertIn(incoming['id'],[r['doc_id'] for r in all_rows])
+        self.assertTrue(all(r['code']=='M1' for r in all_rows))
+        self.assertTrue(any(r['has_source'] for r in all_rows))
+        self.assertEqual(before,app.overview()['stock'])
+        for invalid in (True,0,-1,'oops',99999):
+            with self.assertRaises(ValueError): app.stock_detail(invalid)
+
+    def test_move_and_state_preserve_box_contents_without_double_deduction(self):
+        app.import_post(self.receipt('BOX',qty='1'))
+        source=self.pos()
+        contents=[{'name':'轴承','spec':'M12','qty':2,'unit':'个'}]
+        with app.connect() as c:
+            c.execute('UPDATE stock SET contents=? WHERE id=?',(json.dumps(contents),source['id']))
+            empty=app.position(c,source['code'],source['batch'],source['box'],'WH2','B3','AVAILABLE')
+        app.stock_post(self.request(kind='MOVE',warehouse='WH2',bin='B3',lines=[{'stock_id':source['id'],'qty':1}]))
+        target=self.pos()
+        self.assertEqual(app.stock_detail(target['id'])['stock']['contents'],contents)
+        app.stock_post(self.request(kind='STATE',state='PENDING',lines=[{'stock_id':target['id'],'qty':1}]))
+        pending=self.pos('PENDING')
+        self.assertEqual(app.stock_detail(pending['id'])['stock']['contents'],contents)
+        self.assertEqual(sum(s['qty'] for s in app.overview()['stock']),1)
     def test_complete_flow(self):
         app.import_post(self.receipt('design','1000',kind='BASELINE'))
         app.change_design(dict(self.request(),code='M1',qty='100',reason='Approved test change'))
@@ -60,6 +112,20 @@ class LedgerTest(unittest.TestCase):
             action=c.execute('SELECT action,document_number,reason,operator FROM admin_actions').fetchone()
             self.assertEqual(tuple(action),('DELETE', 'IN-'+action['document_number'].split('-',1)[1], '误导入测试', 'ADMIN'))
 
+    def test_password_only_delete_single_and_batch(self):
+        app.admin_password_set({'new_password':'123'})
+        for batch in (False,True):
+            incoming=app.import_post(self.receipt('PASSWORD-'+str(batch),qty='8'))
+            delete=app.admin_delete_batch if batch else app.admin_delete
+            target={'ids':[incoming['id']]} if batch else {'id':incoming['id']}
+            with self.assertRaisesRegex(ValueError,'管理员密码错误'):
+                delete(dict(target,password='wrong'))
+            delete(dict(target,password='123'))
+        self.assertFalse(app.overview()['documents'])
+        with app.connect() as c:
+            self.assertEqual([tuple(r) for r in c.execute('SELECT reason,operator FROM admin_actions')],
+                             [('密码确认删除','密码验证')]*2)
+
     def test_admin_delete_rejects_receipt_already_used_by_issue(self):
         incoming=app.import_post(self.receipt('ADMIN-BLOCK',qty='8'))
         stock=self.pos()
@@ -97,7 +163,10 @@ class LedgerTest(unittest.TestCase):
         app.stock_post(self.request(kind='OUT',lines=[{'stock_id':sid,'qty':3}]))
         group=next(g for g in app.overview()['contracts'] if g['code']=='7300002797-组件')
         self.assertEqual((group['received'],group['issued'],group['onhand']), (8,3,5))
-        item=group['items'][0]
+        # Contracts carry codes plus a count now, not a nested copy of every item.
+        self.assertEqual(group['item_count'],1)
+        self.assertEqual(group['item_codes'],['M1'])
+        item=next(r for r in app.overview()['items'] if r['code']=='M1')
         self.assertTrue(item['inbound_first']); self.assertTrue(item['outbound_last'])
     def test_boxes_are_distinct_positions(self):
         content='物资编码,物资名称,规格型号,单位,数量,批次,箱号,仓库,库位,库存状态\nM1,Test material,M12,EA,2,B1,C01,WH,A1,AVAILABLE\nM1,Test material,M12,EA,3,B1,C02,WH,A1,AVAILABLE\n'
@@ -121,21 +190,32 @@ class LedgerTest(unittest.TestCase):
     def test_shipment_sheet_cannot_post_receipt(self):
         content='箱件号,货物名称,包装类型,单位,数量\nC01,Test material,木箱,箱,1\n'
         p=self.request(filename='shipment.csv',content=base64.b64encode(content.encode()).decode(),external_ref='SHIPMENT',defaults={'batch':'B1','warehouse':'WH','bin':'A1'})
-        with self.assertRaisesRegex(ValueError,'发货清单'):
-            app.parse_file(p)
+        result,_=app.parse_file(p)
+        self.assertEqual(result['sheet_kind'],'shipment')
+        self.assertTrue(any('发货清单' in error for error in result['errors']))
         with self.assertRaisesRegex(ValueError,'发货清单'):
             app.import_post(p)
 
     def test_generic_shipment_headers_are_classified_before_receipt(self):
         content='箱号,货物名称,包装类型,单位,数量\nC01,Test material,木箱,箱,1\n'
         p=self.request(filename='generic.csv',content=base64.b64encode(content.encode()).decode(),external_ref='GENERIC-SHIPMENT')
-        with self.assertRaisesRegex(ValueError,'发货清单'):
-            app.parse_file(p)
+        result,_=app.parse_file(p)
+        self.assertEqual(result['sheet_kind'],'shipment')
+        self.assertTrue(any('发货清单' in error for error in result['errors']))
     def test_packing_sheet_name_wins_over_workbook_filename(self):
         wb=openpyxl.Workbook();ws=wb.active;ws.title='一期装箱清单';ws.append(['物资编码','物资名称','规格型号','单位','数量','箱号']);ws.append(['M1','Test material','M12','EA',2,'C01'])
         stream=io.BytesIO();wb.save(stream)
         p=self.request(filename='阜康发货清单.xlsx',content=base64.b64encode(stream.getvalue()).decode(),external_ref='PACKING-SHEET',defaults={'batch':'B1','warehouse':'WH','bin':'A1'},sheet='一期装箱清单')
         result=app.import_post(p);self.assertTrue(result['id'])
+    def test_packing_detail_headers_win_over_shipment_filename_on_generic_sheet(self):
+        wb=openpyxl.Workbook();ws=wb.active;ws.title='Page 1 (2)'
+        ws.append(['','箱号','序号','物料编码','','零件图号','','零件名称','','数量','','单位','装配描述','备注'])
+        ws.append(['','7-2','1','M1','','S1','','主轴加工图','','1','','个','主轴',''])
+        stream=io.BytesIO();wb.save(stream)
+        p=self.request(filename='1#水机轴发货清单(1).xlsx',content=base64.b64encode(stream.getvalue()).decode(),external_ref='GENERIC-PACKING-SHEET',defaults={'batch':'B1','warehouse':'WH','bin':'A1'},sheet='Page 1 (2)')
+        result,_=app.parse_file(p)
+        self.assertEqual(result['sheet_kind'],'packing')
+        self.assertEqual(result['errors'],[])
     def test_contract_number_is_read_from_workbook_cover(self):
         wb=openpyxl.Workbook();ws=wb.active;ws.title='一期装箱清单'
         ws['H3']='合同编号：7300002797'
@@ -163,6 +243,30 @@ class LedgerTest(unittest.TestCase):
         self.assertEqual(result['errors'],[])
         self.assertEqual((result['rows'][0]['batch'],result['rows'][0]['code'],result['rows'][0]['warehouse'],result['rows'][0]['bin']),( '组件-250905-01','组件-250905-01-001','主仓库','待分配'))
         self.assertEqual({r['code'] for r in result['rows']},{'组件-250905-01-001'})
+
+    def test_generated_batches_keep_full_sequence_and_reject_invalid_numbers(self):
+        self.assertEqual(app.generated_batch({}),'B01')
+        for key in ('batch_number','batchNumber'):
+            for value,expected in ((1,'B01'),('99','B99'),(100,'B100'),('101','B101')):
+                with self.subTest(key=key,value=value):
+                    self.assertEqual(app.generated_batch({key:value}),expected)
+            for value in (0,-1,'0','-1','1.5',1.5,True,False,'abc','',None):
+                with self.subTest(key=key,invalid=value):
+                    with self.assertRaisesRegex(ValueError,'批次'):
+                        app.generated_batch({key:value})
+        self.assertEqual(app.generated_batch(dict(batch_device='组件',arrival_date='2025-09-05',batch_number=100)),
+                         '组件-250905-100')
+
+    def test_automatic_batch_validation_does_not_override_explicit_batch(self):
+        content='物资编码,物资名称,规格型号,单位,数量,箱号\nM1,Test material,M12,EA,2,C01\n'
+        p=self.request(filename='batch.csv',content=base64.b64encode(content.encode()).decode(),kind='IN',batch_number='0')
+        with self.assertRaisesRegex(ValueError,'批次'): app.import_post(p)
+        self.assertEqual(app.overview()['documents'],[])
+        self.assertEqual(app.overview()['stock'],[])
+        p['defaults']={'batch':'厂家原批次-2026-101'}
+        result,_=app.parse_file(p)
+        self.assertEqual(result['errors'],[])
+        self.assertEqual(result['rows'][0]['batch'],'厂家原批次-2026-101')
 
     def test_code_less_item_reuses_internal_code_across_batches(self):
         def payload(ref,batch,qty):

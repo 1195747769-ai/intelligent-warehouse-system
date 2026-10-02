@@ -1,0 +1,16 @@
+Univer read-only recognition preview
+
+This application includes the Univer Community Edition Sheets preset, bundled locally.
+The Univer packages used by this application are licensed under Apache License 2.0:
+
+- @univerjs/preset-sheets-core 1.0.2
+- @univerjs/presets 1.0.2
+
+Project source: https://github.com/dream-num/univer
+License text: /Apache-2.0.txt
+Exact build dependency versions, including transitive packages: package-lock.json
+
+The bundled SDK is used only to display normalized recognition rows in a protected
+filter-only worksheet. The application does not include Univer Pro or use its
+commercial import/export services. Third-party packages retain the licenses in
+their respective upstream package metadata.
